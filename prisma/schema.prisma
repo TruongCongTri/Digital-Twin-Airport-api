@@ -1,13 +1,246 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
-  provider   = "prisma-client"
-  output = "../src/generated"
+  provider = "prisma-client"
+  output   = "../src/generated"
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+/* ---------------------------------------------------------
+   ENUMS
+--------------------------------------------------------- */
+
+enum Role {
+  ADMIN
+  OPERATOR
+  GUEST
+}
+
+enum SensorType {
+  CO2
+  TEMPERATURE
+  HUMIDITY
+  WIND_INDOOR
+  WIND_OUTDOOR
+  TILT_STRUCTURAL
+  LIGHT_DENSITY
+  TARMAC_TEMP
+}
+
+enum SensorStatus {
+  ACTIVE
+  WARNING       // Approaching safety thresholds (Yellow)
+  CRITICAL      // Breached safety thresholds (Red)
+  MAINTENANCE   // Hardware being physically repaired
+  CALIBRATING   // Online, but data should be ignored by AI
+  OFFLINE       // Intentionally powered down
+  UNREACHABLE   // Network failure / Missed heartbeat
+}
+
+enum ZoneType {
+  TERMINAL_DOMESTIC
+  TERMINAL_INTERNATIONAL
+  CHECK_IN
+  SECURITY_GATE
+  WAITING_LOUNGE
+  BAGGAGE_CLAIM
+  RUNWAY
+  TAXIWAY
+  APRON         // Tarmac area where parking stands are located
+}
+
+enum FlightStatus {
+  SCHEDULED
+  APPROACHING
+  LANDED
+  TAXIING
+  PARKED        // Linked to ParkingStand
+  BOARDING
+  PUSHBACK
+  DEPARTED
+  CANCELLED
+}
+
+/* ---------------------------------------------------------
+   1. CORE: ZONES & INFRASTRUCTURE
+--------------------------------------------------------- */
+
+/// Represents a physical area or room inside/outside the airport
+model Zone {
+  id              String         @id @default(uuid())
+  name            String
+  type            ZoneType
+  floorLevel      Int            @default(1)
+  maxCapacity     Int?           /// Max allowed people/vehicles
+  currentDensity  Int            @default(0) /// Updated by Crowd Simulation Engine
+  
+  // Relations
+  sensors         Sensor[]
+  parkingStands   ParkingStand[] /// Gates or Tarmac parking spots located in this zone
+  
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@map("zones")
+}
+
+/// Specific parking locations for aircraft on the Apron/Gates
+model ParkingStand {
+  id              String   @id @default(uuid())
+  code            String   @unique /// e.g., "Gate 12", "Stand V1"
+  
+  // 3D Spatial Coordinates for ArcGIS highlighting
+  x               Float
+  y               Float
+  z               Float
+  
+  isOccupied      Boolean  @default(false)
+  
+  // Relations
+  zoneId          String
+  zone            Zone     @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  flights         Flight[] /// History of flights that used this stand
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("parking_stands")
+}
+
+/// Metadata for ArcGIS 3D Layers (Architecture, MEP, Structural)
+model BuildingLayer {
+  id              String   @id @default(uuid())
+  name            String
+  arcgisItemId    String   @unique
+  url             String
+  isVisible       Boolean  @default(true)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("building_layers")
+}
+
+/* ---------------------------------------------------------
+   2. IOT HARDWARE & DATA
+--------------------------------------------------------- */
+
+/// Represents a physical IoT device mapped to X,Y,Z coordinates in ArcGIS
+model Sensor {
+  id              String       @id @default(uuid())
+  name            String
+  type            SensorType
+  status          SensorStatus @default(ACTIVE)
+  
+  // 3D Spatial Coordinates for ArcGIS mapping
+  x               Float
+  y               Float
+  z               Float
+  
+  // FAST CACHE FOR DASHBOARD
+  currentValue    Float?       /// The latest live reading
+  lastReadAt      DateTime?    /// When the reading was taken
+
+  // Relations
+  zoneId          String
+  zone            Zone         @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  logs            SensorLog[]
+  
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([zoneId])
+  @@index([type, status]) /// Optimized for "GET /sensors?type=CO2&status=ACTIVE"
+  @@map("sensors")
+}
+
+/// Time-series data for historical charts and AI prediction
+model SensorLog {
+  id              String   @id @default(uuid())
+  sensorId        String
+  sensor          Sensor   @relation(fields: [sensorId], references: [id], onDelete: Cascade)
+  
+  value           Float
+  timestamp       DateTime @default(now())
+  
+  @@index([sensorId, timestamp(sort: Desc)]) /// Crucial for querying recent history quickly
+  @@map("sensor_logs")
+}
+
+/* ---------------------------------------------------------
+   3. AVIATION TRACKING
+--------------------------------------------------------- */
+
+model Flight {
+  id              String       @id @default(uuid())
+  flightNumber    String       @unique /// e.g., VN-123
+  airline         String
+  origin          String
+  destination     String
+  status          FlightStatus @default(SCHEDULED)
+  
+  // Relations
+  parkingStandId  String?      /// Assigned gate/stand when parked or taxiing
+  parkingStand    ParkingStand? @relation(fields: [parkingStandId], references: [id])
+  
+  telemetry       FlightTelemetry[]
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([status])
+  @@map("flights")
+}
+
+/// Live coordinates for rendering the dashed line path in ArcGIS
+model FlightTelemetry {
+  id              String   @id @default(uuid())
+  flightId        String
+  flight          Flight   @relation(fields: [flightId], references: [id], onDelete: Cascade)
+  
+  longitude       Float
+  latitude        Float
+  altitude        Float
+  heading         Float
+  speed           Float
+
+  timestamp       DateTime @default(now())
+
+  @@index([flightId, timestamp(sort: Desc)])
+  @@map("flight_telemetry")
+}
+
+/* ---------------------------------------------------------
+   4. SYSTEM & AUTH
+--------------------------------------------------------- */
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  fullName  String
+  role      Role     @default(OPERATOR)
+  
+  sessions  Session[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken String   @unique
+  expiresAt    DateTime
+  
+  createdAt    DateTime @default(now())
+
+  @@map("sessions")
 }

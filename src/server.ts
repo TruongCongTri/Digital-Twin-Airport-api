@@ -7,6 +7,8 @@
 import { prisma } from './common/configs/prisma';
 import { env } from './common/configs/env';
 import app from './app';
+import { createServer } from 'http'; // Import native HTTP
+import { socketConfig } from './common/configs/socket'; // Import Socket.IO config
 
 /**
  * @function checkDatabaseConnection
@@ -31,9 +33,15 @@ const startServer = async () => {
   try {
     await checkDatabaseConnection();
 
+    // 1. Create native HTTP server wrapping the Express app
+    const httpServer = createServer(app);
+
+    // 2. Attach Socket.IO to the native HTTP server
+    socketConfig.init(httpServer);
+
     const port = parseInt(env.PORT, 10);
 
-    app.listen(port, () => {
+    httpServer.listen(port, () => {
       console.log(`=================================`);
       console.log(`API Server is running at: http://localhost:${port}`);
       console.log(`Accepting connections from: ${env.CLIENT_URL}`);

@@ -16,10 +16,8 @@ export const RESOURCES = {
   SMS: 'SMS',
   ZALO: 'Zalo',
 
-  /* --- Score Event Module --- */
-  SCORE_EVENT: 'Score Event',
-  LIVE_SCOREBOARD: 'Live Scoreboard',
-  PLAYER_SCORE: 'Player Score',
+  /* --- Sensor Module --- */
+  SENSOR: 'Sensor',
 } as const;
 
 export type ResourceName = (typeof RESOURCES)[keyof typeof RESOURCES];

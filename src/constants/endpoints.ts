@@ -26,36 +26,46 @@ export const ENDPOINTS = {
     REVOKE_OTHER_SESSIONS: '/sessions/others',
   },
 
-  /* --- Example Endpoints --- */
-  PUBLIC: {
-    CATEGORIES: '/categories',
-    PRODUCTS: '/products',
-    PRODUCT_DETAIL: '/products/:slug', // Product detail by slug (SEO-friendly)
-    PRODUCT_REVIEWS: '/products/:slug/reviews', // View public reviews
-    SELLERS: '/sellers',
-    SELLER_DETAIL: '/sellers/:id', // View seller profile
-    WEBHOOK_PAYMENT: '/payments/webhook',
+  /* --- Infrastructure & BIM --- */
+  INFRASTRUCTURE: {
+    BASE: '/infrastructure',
+    LAYERS: '/layers', // Fetch ArcGIS Building Scene Layer URLs
+    ZONES: '/zones', // Fetch all airport zones (Check-in, Gates, Runways)
+    ZONE_DETAIL: '/zones/:id',
+    PARKING_STANDS: '/parking-stands', // Monitor aircraft parking availability
   },
-  USER: {
-    BASE: '/users/me',
-    PROFILE: '/',
-    AVATAR: '/avatar',
-    PASSWORD: '/password',
-    SESSIONS: '/sessions',
-    EMAIL_CHANGE_REQUEST: '/request-email-change',
+
+  /* --- IoT Sensors --- */
+  SENSOR: {
+    BASE: '/sensors',
+    GET_ALL: '/', // Handles queries like ?type=CO2&zoneId=123
+    TYPES: '/metadata/types', // Returns available sensor types for UI dropdowns
+    DETAIL: '/:id',
+    HISTORY: '/:id/history', // Fetch historical time-series data for line charts
+    GLOBAL_HISTORY: '/logs/all',
   },
-  ADMIN: {
-    BASE: '/admin',
-    USERS: '/users',
-    USER_SESSIONS: '/users/:id/sessions',
-    COURSES: '/courses',
-    CATEGORIES: '/categories',
-    ORDERS: '/orders',
-    ORDER_REFUND: '/orders/:id/refund',
-    ORDER_SYNC: '/orders/:id/query-payment-status',
-    VOUCHERS: '/vouchers',
-    SYSTEM: '/system',
-    SYSTEM_HEALTH: '/system/health',
-    FORBIDDEN_WORDS: '/system/forbidden-words',
+
+  /* --- Crowd Management (AI Camera Mock) --- */
+  CROWD: {
+    BASE: '/crowd',
+    DENSITY: '/density', // Current density across all zones
+    ZONE_PREDICTION: '/zones/:zoneId/prediction', // AI flow prediction
+  },
+
+  /* --- Aviation & Flight Tracking --- */
+  FLIGHT: {
+    BASE: '/flights',
+    ACTIVE: '/active', // List of currently tracked flights on tarmac/air
+    DETAIL: '/:id',
+    TELEMETRY: '/:id/telemetry', // Specific flight coordinate history
+    ALLOCATION: '/:id/allocation', // Get/Update assigned parking stand or gate
+  },
+
+  /* --- Simulation & Demo Engine --- */
+  SIMULATION: {
+    BASE: '/simulation',
+    START: '/start', // Start general mock data generation
+    STOP: '/stop',
+    SCENARIO: '/scenario', // Trigger specific Demo Killer Features (e.g., TIRE_OVERHEAT)
   },
 } as const;

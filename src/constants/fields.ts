@@ -36,6 +36,11 @@ export const FIELDS = {
   /* --- 4. EXAMPLE MODULE --- */
   TITLE: 'Title',
   DESCRIPTION: 'Description',
+  TYPE: 'Type',
+  X: 'X coordinate',
+  Y: 'Y coordinate',
+  Z: 'Z coordinate',
+  ZONE: 'Zone ID',
   PRICE: 'Price',
   THUMBNAIL: 'Thumbnail',
   CATEGORY: 'Category',
@@ -43,6 +48,8 @@ export const FIELDS = {
   INSTRUCTOR: 'Instructor',
   MIN_PRICE: 'Minimum price',
   MAX_PRICE: 'Maximum price',
+
+  SCENARIO: 'Scenario',
 } as const;
 
 export type FieldName = (typeof FIELDS)[keyof typeof FIELDS];

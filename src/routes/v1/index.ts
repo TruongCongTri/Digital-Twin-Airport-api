@@ -5,8 +5,9 @@
  * @module Routes/V1
  */
 import { Router } from 'express';
-// import { ENDPOINTS } from '../../constants/endpoints';
-
+import { ENDPOINTS } from '../../constants/endpoints';
+import sensorRoute from '../../modules/sensor/sensor.route';
+import simulationRoute from '../../modules/simulation/simulation.route';
 const v1Router = Router();
 
 /**
@@ -14,6 +15,7 @@ const v1Router = Router();
  * Individual domain routes are attached to their respective base paths
  * defined in the global ENDPOINTS constant.
  */
-// v1Router.use(ENDPOINTS, controllerRouter);
+v1Router.use(ENDPOINTS.SENSOR.BASE, sensorRoute);
+v1Router.use(ENDPOINTS.SIMULATION.BASE, simulationRoute);
 
 export default v1Router;

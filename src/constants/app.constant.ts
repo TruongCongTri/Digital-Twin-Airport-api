@@ -74,6 +74,12 @@ export const APP_CONFIG = {
     AUTH_WINDOW_MINUTES: 1,
     AUTH_MAX_REQUESTS: 5,
   },
+
+  /* --- 7. SIMULATION --- */
+  SIMULATION: {
+    TICK_RATE_MS: 3000,
+    DB_SAVE_TICK_MODULO: 20,
+  },
   // Future modules:
   // COURSE: { MAX_VIDEO_SIZE_MB: 500 }
 };

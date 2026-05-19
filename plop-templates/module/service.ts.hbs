@@ -4,49 +4,6 @@ import { AppError } from '@/common/errors/app.error';
 import { MESSAGES } from '@/constants/messages';
 import { RESOURCES } from '@/constants/resources';
 
-export class {{pascalCase name}}Service {
-  private readonly {{camelCase name}}Repository: {{pascalCase name}}Repository;
-
-  constructor() {
-    this.{{camelCase name}}Repository = new {{pascalCase name}}Repository();
-  }
-
-  /**
-   * Create new {{pascalCase name}}
-   */
-  public async create(data: Create{{pascalCase name}}DTO) {
-    // 1. Business logic
-    // EG: Check if related entities exist, validate data, etc.
-    
-    // 2. Call Repository to create {{pascalCase name}}
-    return await this.{{camelCase name}}Repository.create(data);
-  }
-
-  /**
-   * Get all {{pascalCase name}}
-   */
-  public async getAll() {
-    // TODO: Add filtering, pagination logic if needed
-    return await this.{{camelCase name}}Repository.findAll();
-  }
-
-  /**
-   * Get detail of {{pascalCase name}} by ID
-   */
-  public async getDetail(id: string) {
-    const result = await this.{{camelCase name}}Repository.findById(id);
-    
-    if (!result) {
-      throw new AppError(404, MESSAGES.COMMON.ERROR.NOT_FOUND(RESOURCES.{{constantCase name}}));
-    }
-    
-    return result;
-  }import { {{pascalCase name}}Repository } from './{{dashCase name}}.repository';
-import { Create{{pascalCase name}}DTO, Update{{pascalCase name}}DTO } from './{{dashCase name}}.schema';
-import { AppError } from '@/common/errors/app.error';
-import { MESSAGES } from '@/constants/messages';
-import { RESOURCES } from '@/constants/resources';
-
 /**
  * @class {{pascalCase name}}Service
  * @description Orchestrates business logic, verifies entity existence before mutations, 
@@ -104,29 +61,6 @@ export class {{pascalCase name}}Service {
 
   /**
    * @description Delete {{pascalCase name}} by ID
-   */
-  public async delete(id: string) {
-    // 1. Verify existence
-    await this.getDetail(id);
-
-    // 2. Call Repository to delete
-    return await this.{{camelCase name}}Repository.delete(id);
-  }
-}
-
-  /**
-   * Update {{pascalCase name}} by ID
-   */
-  public async update(id: string, data: Update{{pascalCase name}}DTO) {
-    // 1. Verify existence
-    await this.getDetail(id);
-
-    // 2. Call Repository to update
-    return await this.{{camelCase name}}Repository.updateById(id, data);
-  }
-
-  /**
-   * Delete {{pascalCase name}} by ID
    */
   public async delete(id: string) {
     // 1. Verify existence
