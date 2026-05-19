@@ -1,0 +1,48 @@
+/**
+ * @file fields.ts
+ * @description Registry of all field names used in the system.
+ * Used primarily for consistent UI labels in validation messages.
+ */
+export const FIELDS = {
+  // --- SERVER ---
+  DB: 'DATABASE_URL',
+  CLIENT: 'CLIENT_URL',
+
+  /* --- 1. GENERAL & INFRASTRUCTURE --- */
+  ID: 'ID',
+  SLUG: 'Slug',
+  STATUS: 'Status',
+  CREATED_AT: 'Created at',
+  UPDATED_AT: 'Updated at',
+  DELETED_AT: 'Deleted at',
+
+  /* --- 2. AUTHENTICATION & USER --- */
+  EMAIL: 'Email',
+  PHONE: 'Phone number',
+  PASSWORD: 'Password',
+  CURRENT_PASSWORD: 'Current password',
+  NEW_PASSWORD: 'New password',
+  CONFIRM_PASSWORD: 'Confirm password',
+  FULL_NAME: 'Full name',
+  AVATAR: 'Avatar',
+  DEVICE_ID: 'Device ID',
+  SESSION_ID: 'Session ID',
+  IDENTIFIER: 'Identifier (Email/Phone)',
+  OTP_CODE: 'Verification code (OTP)',
+  CHANNEL: 'Delivery channel',
+  TOKEN: 'Token',
+  REFRESH_TOKEN: 'Refresh Token',
+
+  /* --- 4. EXAMPLE MODULE --- */
+  TITLE: 'Title',
+  DESCRIPTION: 'Description',
+  PRICE: 'Price',
+  THUMBNAIL: 'Thumbnail',
+  CATEGORY: 'Category',
+  SELLER: 'Seller',
+  INSTRUCTOR: 'Instructor',
+  MIN_PRICE: 'Minimum price',
+  MAX_PRICE: 'Maximum price',
+} as const;
+
+export type FieldName = (typeof FIELDS)[keyof typeof FIELDS];

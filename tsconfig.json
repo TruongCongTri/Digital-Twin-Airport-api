@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    /* 1. Target & Module System */
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler", // Allow to import with out extension .js/.ts
+    "lib": ["ES2022"],
+    "types": ["node"],
+
+    /* 2. Paths Configuration */
+    "rootDir": "./",
+    "outDir": "./dist",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+
+    /* 3. Interop & Compatibility */
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "isolatedModules": true, // required with using with bundler/tsx
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+
+    /* 4. Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+
+    /* 5. Emit Configuration */
+    "sourceMap": true,
+    "declaration": false,
+    "allowImportingTsExtensions": false
+  },
+  "include": ["src/**/*", "tests/**/*", "prisma.config.ts", ".env"],
+  "exclude": ["node_modules", "dist", "**/*.spec.ts"]
+}

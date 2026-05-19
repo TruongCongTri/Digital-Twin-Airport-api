@@ -1,0 +1,41 @@
+import { Prisma } from '@/generated/client';
+import { prisma } from '@/common/configs/prisma';
+import { BaseRepository } from '@/common/repositories/base.repository';
+import { Create{{pascalCase name}}DTO, Update{{pascalCase name}}DTO } from './{{dashCase name}}.schema';
+
+/**
+ * @class {{pascalCase name}}Repository
+ * @description Handles all raw database interactions, atomic transactions, and CQRS routing
+ * for the ScoreEvent and PlayerScore domains.
+ */
+export class {{pascalCase name}}Repository extends BaseRepository<Prisma.{{pascalCase name}}Delegate> {
+  constructor() {
+    // inject Prisma client delegate for {{pascalCase name}} model
+    super('{{camelCase name}}');
+  }
+
+  /**
+   * @method create
+   * @description Create a new {{pascalCase name}} record
+   * 
+   * @param data - The validated {{pascalCase name}} payload
+   * @returns The created {{pascalCase name}} record
+   */ 
+  public async create(data: Create{{pascalCase name}}DTO) {
+    return await prisma.{{camelCase name}}.create({
+      data,
+    });
+  }
+
+  /**
+   * @method updateById
+   * @description Update a {{pascalCase name}} record by ID
+   * 
+   * @param id - The strictly validated UUID of the {{pascalCase name}} record
+   * @param data - The partial data payload to update
+   * @returns The updated {{pascalCase name}} record
+   */ 
+  public async updateById(id: string, data: Update{{pascalCase name}}DTO) {
+    return await super.update(id, data);
+  }
+}

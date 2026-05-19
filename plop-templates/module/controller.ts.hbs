@@ -1,0 +1,94 @@
+import { Request, Response } from 'express';
+import { {{pascalCase name}}Service } from './{{dashCase name}}.service';
+import { successResponse } from '@/common/utils/responses/api-response';
+import { MESSAGES } from '@/constants/messages';
+import { RESOURCES } from '@/constants/resources';
+import { Create{{pascalCase name}}DTO, Update{{pascalCase name}}DTO } from './{{dashCase name}}.schema';
+
+/**
+ * @class {{pascalCase name}}Controller
+ * @description Bridges the Express HTTP layer and the underlying Service logic.
+ * Assumes a global async-error handler wrapper is active in the Express app.
+ */
+export class {{pascalCase name}}Controller {
+  private readonly {{camelCase name}}Service: {{pascalCase name}}Service;
+
+  constructor() {
+    this.{{camelCase name}}Service = new {{pascalCase name}}Service();
+  }
+
+
+  /**
+   * @description [POST] Extracts body and initiates event creation.
+   */
+  public create = async (req: Request, res: Response) => {
+    // TODO: Add DTO type casting (EG: req.body as Create{{pascalCase name}}DTO)
+    const payload = req.body; 
+    
+    const data = await this.{{camelCase name}}Service.create(payload);
+
+    successResponse(res, {
+      statusCode: 201,
+      message: MESSAGES.COMMON.SUCCESS.CREATED(RESOURCES.{{constantCase name}}),
+      data,
+    });
+  };
+
+  /**
+   *  @description [GET] Get all {{pascalCase name}}
+   */
+  public getAll = async (req: Request, res: Response) => {
+    const data = await this.{{camelCase name}}Service.getAll();
+
+    successResponse(res, {
+      statusCode: 200,
+      message: MESSAGES.COMMON.SUCCESS.FETCHED(RESOURCES.{{constantCase name}}),
+      data,
+    });
+  };
+
+  /**
+   * @description [GET] Get details {{pascalCase name}}
+   */
+  public getDetail = async (req: Request, res: Response) => {
+    const id = req.params.id as string; 
+    
+    const data = await this.{{camelCase name}}Service.getDetail(id);
+
+    successResponse(res, {
+      statusCode: 200,
+      message: MESSAGES.COMMON.SUCCESS.FETCHED(RESOURCES.{{constantCase name}}),
+      data,
+    });
+  };
+
+  /**
+   *  @description [PATCH] Update {{pascalCase name}}
+   */
+  public update = async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const payload = req.body as Update{{pascalCase name}}DTO;
+
+    const data = await this.{{camelCase name}}Service.update(id, payload);
+
+    successResponse(res, {
+      statusCode: 200,
+      message: MESSAGES.COMMON.SUCCESS.UPDATED(RESOURCES.{{constantCase name}}),
+      data,
+    });
+  };
+
+  /**
+   * @description [DELETE] Delete {{pascalCase name}}
+   */
+  public delete = async (req: Request, res: Response) => {
+    const id = req.params.id as string; 
+    
+    await this.{{camelCase name}}Service.delete(id);
+
+    successResponse(res, {
+      statusCode: 200, // Or 204 No Content
+      message: MESSAGES.COMMON.SUCCESS.DELETED(RESOURCES.{{constantCase name}}),
+    });
+  };
+}

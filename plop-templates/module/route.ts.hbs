@@ -1,0 +1,69 @@
+import { Router } from 'express';
+import { {{pascalCase name}}Controller } from './{{dashCase name}}.controller';
+import { validate } from '@/middlewares/validate.middleware';
+import { create{{pascalCase name}}Schema, update{{pascalCase name}}Schema } from './{{dashCase name}}.schema';
+import { ENDPOINTS } from '@/constants/endpoints';
+import { getSlugSchema, getIDSchema } from '@/common/schemas/reusable.schema';
+
+/**
+ * @class {{pascalCase name}}Route
+ * @description Registers all RESTful endpoints, injects Zod validation middlewares,
+ * and maintains strict path precedence to prevent routing conflicts.
+ */
+export class {{pascalCase name}}Route {
+  public router: Router;
+  private readonly {{camelCase name}}Controller: {{pascalCase name}}Controller;
+
+  /**
+   * Init Route with Dependency Injection (DI)
+   */
+  constructor(controller?: {{pascalCase name}}Controller) {
+    this.router = Router();
+    this.{{camelCase name}}Controller = controller || new {{pascalCase name}}Controller();
+    
+    this.initializeRoutes();
+  }
+
+  private initializeRoutes() {
+    // TODO: Define the ENDPOINTS constant in src/constants/endpoints.ts
+    // TODO: Declare this route in the main configuration file (e.g., src/modules/index.route.ts)
+
+    // [POST] CREATE NEW {{pascalCase name}}
+    this.router.post(
+      ENDPOINTS.{{constantCase name}}.CREATE,
+      validate(create{{pascalCase name}}Schema),
+      this.{{camelCase name}}Controller.create
+    );
+
+    // [GET] GET ALL {{pascalCase name}}
+    this.router.get(
+      ENDPOINTS.{{constantCase name}}.GET_ALL
+      this.{{camelCase name}}Controller.getAll
+    );
+    
+    // [GET] GET DETAILS OF {{pascalCase name}} BY SLUG
+    this.router.get(
+      ENDPOINTS.{{constantCase name}}.DETAIL,
+      validate(getSlugSchema),
+      this.{{camelCase name}}Controller.getDetail
+    );
+
+    // [PATCH] UPDATE {{pascalCase name}} BY ID
+    this.router.patch(
+      ENDPOINTS.{{constantCase name}}.UPDATE,
+      validate(getIDSchema),
+      validate(update{{pascalCase name}}Schema),
+      this.{{camelCase name}}Controller.update
+    );
+
+    // [DELETE] DELETE {{pascalCase name}} BY ID
+    this.router.delete(
+      ENDPOINTS.{{constantCase name}}.DELETE,
+      validate(getIDSchema),
+      this.{{camelCase name}}Controller.delete
+    );
+  }
+}
+
+// Export default instance of Route to be used in main route configuration
+export default new {{pascalCase name}}Route().router;
