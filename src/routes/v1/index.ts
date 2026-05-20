@@ -8,6 +8,7 @@ import { Router } from 'express';
 import { ENDPOINTS } from '../../constants/endpoints';
 import sensorRoute from '../../modules/sensor/sensor.route';
 import simulationRoute from '../../modules/simulation/simulation.route';
+import flightRoute from '@/modules/flight/flight.route';
 const v1Router = Router();
 
 /**
@@ -17,5 +18,6 @@ const v1Router = Router();
  */
 v1Router.use(ENDPOINTS.SENSOR.BASE, sensorRoute);
 v1Router.use(ENDPOINTS.SIMULATION.BASE, simulationRoute);
+v1Router.use(ENDPOINTS.FLIGHT.BASE, flightRoute);
 
 export default v1Router;

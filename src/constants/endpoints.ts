@@ -55,10 +55,12 @@ export const ENDPOINTS = {
   /* --- Aviation & Flight Tracking --- */
   FLIGHT: {
     BASE: '/flights',
+    GET_ALL: '/',
     ACTIVE: '/active', // List of currently tracked flights on tarmac/air
     DETAIL: '/:id',
     TELEMETRY: '/:id/telemetry', // Specific flight coordinate history
     ALLOCATION: '/:id/allocation', // Get/Update assigned parking stand or gate
+    STATUS: '/:id/status', // Update flight status (e.g., ARRIVED, DEPARTED)
   },
 
   /* --- Simulation & Demo Engine --- */

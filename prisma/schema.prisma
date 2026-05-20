@@ -55,6 +55,7 @@ enum ZoneType {
 
 enum FlightStatus {
   SCHEDULED
+  DELAYED
   APPROACHING
   LANDED
   TAXIING
@@ -62,6 +63,7 @@ enum FlightStatus {
   BOARDING
   PUSHBACK
   DEPARTED
+  DIVERTED
   CANCELLED
 }
 
@@ -76,6 +78,11 @@ model Zone {
   type            ZoneType
   floorLevel      Int            @default(1)
   maxCapacity     Int?           /// Max allowed people/vehicles
+
+  // The ArcGIS Integration Bridge
+  gisItemId     String?  // e.g., "a1b2c3d4e5f6..." (The ArcGIS Portal Item ID)
+  gisSceneUrl   String?  // The direct REST endpoint to the 3D Scene Layer
+
   currentDensity  Int            @default(0) /// Updated by Crowd Simulation Engine
   
   // Relations
@@ -150,6 +157,9 @@ model Sensor {
   zone            Zone         @relation(fields: [zoneId], references: [id], onDelete: Cascade)
   logs            SensorLog[]
   
+  // Link to a specific 3D feature
+  gisFeatureId  String?  // If a sensor is physically attached to a specific 3D wall or AC unit in the BIM model
+
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 

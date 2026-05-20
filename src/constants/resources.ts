@@ -18,6 +18,9 @@ export const RESOURCES = {
 
   /* --- Sensor Module --- */
   SENSOR: 'Sensor',
+
+  FLIGHT: 'Flight',
+  TELEMETRY: 'Telemetry',
 } as const;
 
 export type ResourceName = (typeof RESOURCES)[keyof typeof RESOURCES];

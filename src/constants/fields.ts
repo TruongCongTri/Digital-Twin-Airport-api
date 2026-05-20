@@ -33,7 +33,7 @@ export const FIELDS = {
   TOKEN: 'Token',
   REFRESH_TOKEN: 'Refresh Token',
 
-  /* --- 4. EXAMPLE MODULE --- */
+  /* --- 4. SENSOR MODULE --- */
   TITLE: 'Title',
   DESCRIPTION: 'Description',
   TYPE: 'Type',
@@ -50,6 +50,18 @@ export const FIELDS = {
   MAX_PRICE: 'Maximum price',
 
   SCENARIO: 'Scenario',
+
+  /* --- 5. FLIGHT MODULE --- */
+  FLIGHT_NUMBER: 'Flight Number',
+  AIRLINE: 'Airline',
+  ORIGIN: 'Origin',
+  DESTINATION: 'Destination',
+  PARKING_STAND: 'Parking Stand',
+  LONGITUDE: 'Longitude',
+  LATITUDE: 'Latitude',
+  ALTITUDE: 'Altitude',
+  HEADING: 'Heading',
+  SPEED: 'Speed',
 } as const;
 
 export type FieldName = (typeof FIELDS)[keyof typeof FIELDS];
