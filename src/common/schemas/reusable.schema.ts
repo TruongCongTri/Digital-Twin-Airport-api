@@ -28,7 +28,7 @@ export const paginationSchema = z.object({
     .number()
     .int()
     .min(1)
-    .max(APP_CONFIG.COMMON.PAGINATION.MAX_LIMIT)
+    .max(100, { message: 'Limit must be between 1 and 100.' })
     .default(APP_CONFIG.COMMON.PAGINATION.DEFAULT_LIMIT),
 });
 

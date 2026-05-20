@@ -13,6 +13,7 @@ export const SENSOR_TYPES: [string, ...string[]] = [
   'TILT_STRUCTURAL',
   'LIGHT_DENSITY',
   'TARMAC_TEMP',
+  'CAMERA_AI_CROWD',
 ];
 
 export const SENSOR_STATUSES: [string, ...string[]] = [

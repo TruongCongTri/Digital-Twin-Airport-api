@@ -21,6 +21,7 @@ export const RESOURCES = {
 
   FLIGHT: 'Flight',
   TELEMETRY: 'Telemetry',
+  ZONE: 'Zone',
 } as const;
 
 export type ResourceName = (typeof RESOURCES)[keyof typeof RESOURCES];

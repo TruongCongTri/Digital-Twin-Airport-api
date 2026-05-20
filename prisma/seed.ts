@@ -43,56 +43,35 @@ async function main() {
   console.log('📡 Deploying Sensors...');
   // Consolidated all sensors into a single array with correct Long Thanh coordinates
   const sensorsData = [
-    // Terminal 1 Indoor Sensors
-    {
-      name: 'T1-CO2-01',
-      type: SensorType.CO2,
-      status: SensorStatus.ACTIVE,
-      x: 106.1234,
-      y: 20.5678,
-      z: 5.0, // Mock ArcGIS Coordinates
-      zoneId: terminal1.id,
-    },
-    {
-      name: 'T1-TEMP-01',
-      type: SensorType.TEMPERATURE,
-      status: SensorStatus.ACTIVE,
-      x: 106.1245,
-      y: 20.5689,
-      z: 5.0,
-      zoneId: terminal1.id,
-    },
+    // ==========================================
+    // TERMINAL 1 (Indoor Environment & Structure)
+    // ==========================================
+    // 1. Air Quality
+    { name: 'T1-CO2-01', type: SensorType.CO2, status: SensorStatus.ACTIVE, x: 106.9630, y: 10.7610, z: 5.0, zoneId: terminal1.id },
+    // 2. HVAC Comfort (Year 2)
+    { name: 'T1-TEMP-01', type: SensorType.TEMPERATURE, status: SensorStatus.ACTIVE, x: 106.9632, y: 10.7612, z: 5.0, zoneId: terminal1.id },
+    // 3. Humidity (Year 2)
+    { name: 'T1-HUM-01', type: SensorType.HUMIDITY, status: SensorStatus.ACTIVE, x: 106.9634, y: 10.7614, z: 5.0, zoneId: terminal1.id },
+    // 4. Indoor Airflow / AC Drafts
+    { name: 'T1-WIND-IN-01', type: SensorType.WIND_INDOOR, status: SensorStatus.ACTIVE, x: 106.9636, y: 10.7616, z: 6.0, zoneId: terminal1.id },
+    // 5. Sun Glare / Energy Management
+    { name: 'T1-LIGHT-01', type: SensorType.LIGHT_DENSITY, status: SensorStatus.ACTIVE, x: 106.9638, y: 10.7618, z: 4.0, zoneId: terminal1.id },
+    // 6. Structural Integrity (Year 1) - Placed high on a structural pillar
+    { name: 'T1-TILT-01', type: SensorType.TILT_STRUCTURAL, status: SensorStatus.ACTIVE, x: 106.9639, y: 10.7619, z: 15.0, zoneId: terminal1.id }, 
 
-    // Security Gate Sensors (High traffic risk area)
-    {
-      name: 'SEC-CO2-01',
-      type: SensorType.CO2,
-      status: SensorStatus.ACTIVE,
-      x: 106.13,
-      y: 20.57,
-      z: 5.0,
-      zoneId: securityGate.id,
-    },
+    // ==========================================
+    // SECURITY GATE (Crowd Flow)
+    // ==========================================
+    // 7. AI Crowd Flow Tracking (Year 3) - Mounted on ceiling looking down
+    { name: 'SEC-CAM-AI-01', type: SensorType.CAMERA_AI_CROWD, status: SensorStatus.ACTIVE, x: 106.9640, y: 10.7620, z: 8.0, zoneId: securityGate.id },
 
-    // Apron / Tarmac Outdoor Sensors
-    {
-      name: 'APRON-WIND-01',
-      type: SensorType.WIND_OUTDOOR,
-      status: SensorStatus.ACTIVE,
-      x: 106.15,
-      y: 20.6,
-      z: 15.0, // Mounted on a pole
-      zoneId: apron.id,
-    },
-    {
-      name: 'APRON-TARMAC-TEMP-01',
-      type: SensorType.TARMAC_TEMP,
-      status: SensorStatus.ACTIVE,
-      x: 106.151,
-      y: 20.601,
-      z: 0.0, // Embedded in asphalt
-      zoneId: apron.id,
-    },
+    // ==========================================
+    // APRON / TARMAC (Aviation Safety)
+    // ==========================================
+    // 8. Outdoor Weather
+    { name: 'APRON-WIND-01', type: SensorType.WIND_OUTDOOR, status: SensorStatus.ACTIVE, x: 106.9650, y: 10.7630, z: 15.0, zoneId: apron.id },
+    // 9. Asphalt Heat 
+    { name: 'APRON-TARMAC-TEMP-01', type: SensorType.TARMAC_TEMP, status: SensorStatus.ACTIVE, x: 106.9655, y: 10.7635, z: 0.0, zoneId: apron.id },
   ];
 
   await prisma.sensor.createMany({

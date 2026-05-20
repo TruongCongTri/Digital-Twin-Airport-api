@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "SensorType" ADD VALUE 'CAMERA_AI_CROWD';

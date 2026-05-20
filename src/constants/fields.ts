@@ -62,6 +62,11 @@ export const FIELDS = {
   ALTITUDE: 'Altitude',
   HEADING: 'Heading',
   SPEED: 'Speed',
+
+  ZONE_NAME: 'Zone Name',
+  ZONE_TYPE: 'Zone Type',
+  FLOOR_LEVEL: 'Floor Level',
+  MAX_CAPACITY: 'Max Capacity',
 } as const;
 
 export type FieldName = (typeof FIELDS)[keyof typeof FIELDS];

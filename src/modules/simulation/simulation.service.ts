@@ -211,9 +211,16 @@ export class SimulationService {
           prisma.sensorLog.createMany({ data: logsToInsert }),
           prisma.flightTelemetry.createMany({ data: telemetryLogsToInsert }),
         ]);
-        console.log(
-          `Simulation engine Saved batch telemetry at ${this.currentVirtualDate.toLocaleTimeString()}`
-        );
+
+        const oneHourAgo = new Date(this.currentVirtualDate.getTime() - 60 * 60 * 1000);
+        await prisma.flightTelemetry.deleteMany({
+          where: { timestamp: { lt: oneHourAgo } },
+        });
+        await prisma.sensorLog.deleteMany({
+          where: { timestamp: { lt: oneHourAgo } },
+        });
+
+        console.log(`[Simulation Engine] Saved batch. Pruned old data.`);
       } catch (error) {
         console.error('Simulation engine DB Save Failed:', error);
       }
@@ -246,14 +253,12 @@ export class SimulationService {
         break;
 
       case 'TARMAC_OVERHEAT':
-        // FIX: Use .values() to iterate directly over the state objects, ignoring the ID keys
         for (const state of this.sensorStates.values()) {
           if (state.type === 'TARMAC_TEMP') state.value = 65.5;
         }
         break;
 
       case 'AC_FAILURE':
-        // FIX: Use .values() here as well
         for (const state of this.sensorStates.values()) {
           if (state.type === 'TEMPERATURE') state.value = 28.0;
           if (state.type === 'CO2') state.value = 1500;
@@ -336,6 +341,10 @@ export class SimulationService {
       case 'WIND_INDOOR':
         return 0.2 + load * 0.4;
 
+      case 'CAMERA_AI_CROWD':
+        // Calculates baseline people count in a zone (max 500 people per camera zone)
+        return Math.floor(load * 500);
+
       case 'LIGHT_DENSITY': {
         // 1. Calculate Natural Sunlight (Lux) entering the building
         const naturalLight = solar * 900;
@@ -383,6 +392,10 @@ export class SimulationService {
         // Violent winds cause the building envelope to flex slightly
         target = 0.015;
       }
+      if (type === 'CAMERA_AI_CROWD') {
+        // Flights are delayed, causing passengers to pile up in terminal zones
+        target = Math.floor(target * 1.4);
+      }
     }
 
     // --- ADD MICRO-SHOCKS (VIBRATIONS) ---
@@ -405,6 +418,7 @@ export class SimulationService {
     if (type === 'LIGHT_DENSITY') noiseLimit = 5.0; // Minor flickering or shadows
     if (type === 'TILT_STRUCTURAL') noiseLimit = 0.0005; // Sensor noise
     if (type === 'WIND_INDOOR') noiseLimit = 0.05;
+    if (type === 'CAMERA_AI_CROWD') noiseLimit = 15.0; // People moving in and out of frame
 
     const noise = (Math.random() - 0.5) * noiseLimit;
 
@@ -413,7 +427,8 @@ export class SimulationService {
 
     // Format decimal places based on sensor precision requirements
     if (type === 'TILT_STRUCTURAL') return Number(nextValue.toFixed(4));
-    if (type === 'LIGHT_DENSITY' || type === 'CO2') return Number(nextValue.toFixed(0));
+    if (type === 'LIGHT_DENSITY' || type === 'CO2' || type === 'CAMERA_AI_CROWD')
+      return Number(nextValue.toFixed(0));
 
     return Number(nextValue.toFixed(2));
   }

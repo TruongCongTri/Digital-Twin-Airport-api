@@ -23,12 +23,13 @@ enum Role {
 enum SensorType {
   CO2
   TEMPERATURE
-  HUMIDITY
+  HUMIDITY        // Indoor environmental comfort
   WIND_INDOOR
   WIND_OUTDOOR
-  TILT_STRUCTURAL
-  LIGHT_DENSITY
+  TILT_STRUCTURAL // Structural tilt/deformation monitoring
+  LIGHT_DENSITY   
   TARMAC_TEMP
+  CAMERA_AI_CROWD // Crowd flow tracking and AI prediction
 }
 
 enum SensorStatus {

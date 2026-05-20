@@ -63,6 +63,14 @@ export const ENDPOINTS = {
     STATUS: '/:id/status', // Update flight status (e.g., ARRIVED, DEPARTED)
   },
 
+  /* --- Zone Management --- */
+  ZONE: {
+    BASE: '/zones',
+    GET_ALL: '/',
+    DETAIL: '/:id',
+    ANALYTICS: '/:id/analytics', // AI-generated crowd density & bottleneck predictions
+  },
+
   /* --- Simulation & Demo Engine --- */
   SIMULATION: {
     BASE: '/simulation',
