@@ -56,6 +56,26 @@ export class FlightRepository extends BaseRepository<Flight> {
   }
 
   /**
+   * @method findActiveSurfaceFlights
+   * @description Fetches ONLY flights physically on the ground for the 3D Map, with pagination.
+   */
+  public async getActiveSurfaceFlights(query: GetFlightsQuery) {
+    const where: Prisma.FlightWhereInput = {
+      status: {
+        in: ['LANDED', 'TAXIING', 'PARKED', 'BOARDING', 'PUSHBACK'],
+      },
+    };
+
+    return await this.executePagination({
+      where,
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+      orderBy: { updatedAt: 'desc' },
+      include: { parkingStand: true },
+    });
+  }
+
+  /**
    * @method allocateParkingStandTx
    * @description Safe atomic transaction to assign a gate and update occupancy statuses
    */

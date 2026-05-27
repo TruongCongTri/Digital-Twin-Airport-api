@@ -68,7 +68,7 @@ export class FlightController {
   public getActive = async (req: Request, res: Response) => {
     const query = req.query as unknown as GetFlightsQuery;
 
-    const { data, meta } = await this.flightService.getActive(query);
+    const { data, meta } = await this.flightService.getActiveSurfaceFlights(query);
 
     successResponse(res, {
       statusCode: 200,

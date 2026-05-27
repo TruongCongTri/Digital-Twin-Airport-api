@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { SimulationService } from './simulation.service';
+import { ScenarioType, SimulationService } from './simulation.service';
 import { successResponse } from '@/common/utils/responses/api-response';
 import { TriggerScenarioDTO } from './simulation.schema';
 
@@ -24,7 +24,8 @@ export class SimulationController {
   public triggerScenario = async (req: Request, res: Response) => {
     const payload = req.body as TriggerScenarioDTO;
 
-    const data = this.simulationService.triggerScenario(payload.scenario);
+    // Strict type casting to ensure it matches our Service's expected Enum
+    const data = this.simulationService.triggerScenario(payload.scenario as ScenarioType);
 
     successResponse(res, {
       statusCode: 200,

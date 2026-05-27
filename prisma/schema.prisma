@@ -194,8 +194,10 @@ model Flight {
   destination     String
   status          FlightStatus @default(SCHEDULED)
   
+  assignedRunway String?       // The runway assigned by ATC based on wind (e.g., "RWY_05L")
+  
   // Relations
-  parkingStandId  String?      /// Assigned gate/stand when parked or taxiing
+  parkingStandId  String?      // Assigned gate/stand when parked or taxiing
   parkingStand    ParkingStand? @relation(fields: [parkingStandId], references: [id])
   
   telemetry       FlightTelemetry[]

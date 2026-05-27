@@ -3,16 +3,26 @@ import { FlightStatus, SensorType } from '@/generated/client';
 import { socketConfig } from '@/common/configs/socket';
 import { FlightService } from '../flight/flight.service';
 
+export type ScenarioType =
+  | 'NONE'
+  | 'TROPICAL_SQUALL'
+  | 'TARMAC_OVERHEAT'
+  | 'AC_FAILURE'
+  | 'HEAVY_LOAD'
+  | 'EARTHQUAKE';
+
 // Type definition for our in-memory flight tracker
 interface FlightSimState {
   id: string;
   flightNumber: string;
   status: FlightStatus;
+  assignedRunway: string | null;
   lat: number;
   lng: number;
   alt: number;
   speed: number; // knots
   heading: number; // degrees
+  ticksInState: number; // Tracks how long a plane has been in its current status
 }
 
 export class SimulationService {
@@ -33,13 +43,15 @@ export class SimulationService {
   private readonly flightService: FlightService;
 
   // --- ENVIRONMENT STATE ---
-  private currentVirtualDate: Date = new Date(); // Allows us to manipulate time later
-  private activeWeatherEvent: 'NONE' | 'TROPICAL_SQUALL' = 'NONE';
-  private weatherEventTicksRemaining = 0;
+  private currentVirtualDate: Date = new Date();
+  private activeScenario: ScenarioType = 'NONE';
+  private scenarioTicksRemaining = 0;
 
   // Long Thanh Airport Coordinates (Approximate Center/Runway)
-  private readonly LT_LAT = 10.7611;
-  private readonly LT_LNG = 106.9633;
+  private readonly RUNWAY_START_LAT = 10.772611;
+  private readonly RUNWAY_START_LNG = 107.04528;
+  private readonly TERMINAL_GATE_LAT = 10.7745; // Slightly North-East of Runway
+  private readonly TERMINAL_GATE_LNG = 107.047;
 
   // Make constructor private for Singleton pattern
   private constructor() {
@@ -59,12 +71,10 @@ export class SimulationService {
   public async start(): Promise<{ message: string }> {
     if (this.isRunning) return { message: 'Simulation engine is already running.' };
 
-    // 1. Load baseline sensors into memory
     const sensors = await prisma.sensor.findMany({
       select: { id: true, type: true, currentValue: true },
     });
 
-    // Reset to realistic baselines based on CURRENT time of day
     this.currentVirtualDate = new Date();
     const hour = this.currentVirtualDate.getHours();
     const loadMultiplier = this.getPassengerLoadMultiplier(hour);
@@ -79,32 +89,39 @@ export class SimulationService {
       });
     });
 
-    // Initialize Active Flights
-    const activeFlights = await prisma.flight.findMany({
-      where: { status: { in: ['APPROACHING', 'TAXIING'] } },
+    const currentWindHeading = 60;
+    const activeRunway = currentWindHeading > 0 && currentWindHeading < 180 ? 'RWY_05L' : 'RWY_23R';
+
+    const activeGroundFlights = await prisma.flight.findMany({
+      where: { status: { in: ['LANDED', 'TAXIING', 'PARKED', 'PUSHBACK'] } },
     });
 
-    activeFlights.forEach((f) => {
-      // Mock starting coordinates based on status
-      const isApproaching = f.status === 'APPROACHING';
+    activeGroundFlights.forEach((f) => {
+      const isAtGate = f.status === 'PARKED' || f.status === 'PUSHBACK';
       this.flightStates.set(f.id, {
         id: f.id,
         flightNumber: f.flightNumber,
         status: f.status,
-        // If approaching, start them slightly away from the airport in the sky. If taxiing, start on the ground.
-        lat: isApproaching ? this.LT_LAT - 0.15 : this.LT_LAT,
-        lng: isApproaching ? this.LT_LNG - 0.15 : this.LT_LNG,
-        alt: isApproaching ? 15000 : 0,
-        speed: isApproaching ? 250 : 20,
-        heading: 45, // Approaching runway 05
+        assignedRunway: activeRunway,
+        lat: isAtGate ? this.TERMINAL_GATE_LAT : this.RUNWAY_START_LAT,
+        lng: isAtGate ? this.TERMINAL_GATE_LNG : this.RUNWAY_START_LNG,
+        alt: 0,
+        speed: f.status === 'PARKED' ? 0 : 15,
+        heading: isAtGate ? 225 : 45,
+        ticksInState: 0,
       });
+
+      prisma.flight
+        .update({
+          where: { id: f.id },
+          data: { assignedRunway: activeRunway },
+        })
+        .catch(console.error);
     });
 
     this.isRunning = true;
-
-    // 2. Start the heartbeat loop
     this.intervalId = setInterval(() => this.tick(), this.TICK_RATE_MS);
-    return { message: 'Simulation engine started with Sensor & Aviation telemetry.' };
+    return { message: 'Simulation engine started with Sensor, AI, & Aviation telemetry.' };
   }
 
   public stop(): { message: string } {
@@ -112,6 +129,7 @@ export class SimulationService {
 
     if (this.intervalId) clearInterval(this.intervalId);
     this.isRunning = false;
+    this.activeScenario = 'NONE';
     return { message: 'Simulation engine stopped.' };
   }
 
@@ -119,93 +137,96 @@ export class SimulationService {
    * @description The core loop executed every 3 seconds
    */
   private async tick() {
-    this.currentTick++;
-    const isDbSaveTick = this.currentTick % this.DB_SAVE_TICK_MODULO === 0;
-    const io = socketConfig.getIO();
+    try {
+      this.currentTick++;
+      const isDbSaveTick = this.currentTick % this.DB_SAVE_TICK_MODULO === 0;
+      const io = socketConfig.getIO();
 
-    // 1. Update Environment Time & Weather
-    // Advance virtual time by 3 seconds per tick (or faster if you want to speed up a demo)
-    this.currentVirtualDate.setSeconds(this.currentVirtualDate.getSeconds() + 3);
-    this.processWeatherEvents();
+      this.currentVirtualDate.setSeconds(this.currentVirtualDate.getSeconds() + 3);
+      this.processScenarioTimeouts();
 
-    const hour = this.currentVirtualDate.getHours();
-    const loadMultiplier = this.getPassengerLoadMultiplier(hour);
-    const solarMultiplier = this.getSolarIntensityMultiplier(hour);
+      const hour = this.currentVirtualDate.getHours();
+      const loadMultiplier = this.getPassengerLoadMultiplier(hour);
+      const solarMultiplier = this.getSolarIntensityMultiplier(hour);
 
-    // PROCESS SENSORS
-    const dbUpdates = [];
-    const logsToInsert = [];
-
-    for (const [id, state] of this.sensorStates.entries()) {
-      // 1. Calculate realistic fluctuation (Random Walk)
-      state.value = this.calculateNextValue(
-        state.value,
-        state.type,
-        loadMultiplier,
-        solarMultiplier
-      );
-
-      // 2. Broadcast to UI instantly (WebSockets)
-      io.emit('sensor:stream', {
-        sensorId: id,
-        type: state.type,
-        value: state.value,
-        timestamp: this.currentVirtualDate.toISOString(),
-      });
-
-      // 3. Prepare Database saves (only every 1 minute)
-      if (isDbSaveTick) {
-        // update fast cache on Sensor Table
-        dbUpdates.push(
-          prisma.sensor.update({
-            where: { id },
-            data: { currentValue: state.value, lastReadAt: this.currentVirtualDate },
-          })
-        );
-        logsToInsert.push({ sensorId: id, value: state.value, timestamp: this.currentVirtualDate });
+      // 1. GENERATE AI PREDICTIONS
+      if (this.currentTick % 5 === 0) {
+        this.simulateAIPredictions(io);
       }
-    }
 
-    // PROCESS FLIGHTS
-    const telemetryLogsToInsert: any[] = [];
+      // 2. PROCESS SENSORS
+      const dbUpdates = [];
+      const logsToInsert = [];
 
-    for (const flight of this.flightStates.values()) {
-      // Calculate new GPS position
-      this.calculateNextFlightPosition(flight);
+      for (const [id, state] of this.sensorStates.entries()) {
+        state.value = this.calculateNextValue(
+          state.value,
+          state.type,
+          loadMultiplier,
+          solarMultiplier
+        );
 
-      // Broadcast live movement to the 3D map every 3 seconds (Zero DB hit)
-      io.emit('flight:telemetry', {
-        flightId: flight.id,
-        flightNumber: flight.flightNumber,
-        status: flight.status,
-        lat: flight.lat,
-        lng: flight.lng,
-        alt: flight.alt,
-        speed: flight.speed,
-        heading: flight.heading,
-        timestamp: this.currentVirtualDate.toISOString(),
-      });
+        io.emit('sensor:stream', {
+          sensorId: id,
+          type: state.type,
+          value: state.value,
+          timestamp: this.currentVirtualDate.toISOString(),
+        });
 
-      // Save to database only on the modulo tick to save performance
-      if (isDbSaveTick) {
-        telemetryLogsToInsert.push({
+        if (isDbSaveTick) {
+          dbUpdates.push(
+            prisma.sensor.update({
+              where: { id },
+              data: { currentValue: state.value, lastReadAt: this.currentVirtualDate },
+            })
+          );
+          logsToInsert.push({
+            sensorId: id,
+            value: state.value,
+            timestamp: this.currentVirtualDate,
+          });
+        }
+      }
+
+      // 3. PROCESS FLIGHTS
+      const telemetryLogsToInsert: any[] = [];
+
+      for (const flight of this.flightStates.values()) {
+        flight.ticksInState++;
+        this.calculateNextFlightPosition(flight);
+
+        io.emit('flight:telemetry', {
           flightId: flight.id,
-          latitude: flight.lat,
-          longitude: flight.lng,
-          altitude: flight.alt,
+          flightNumber: flight.flightNumber,
+          status: flight.status,
+          assignedRunway: flight.assignedRunway,
+          lat: flight.lat,
+          lng: flight.lng,
+          alt: flight.alt,
           speed: flight.speed,
           heading: flight.heading,
-          timestamp: this.currentVirtualDate,
+          timestamp: this.currentVirtualDate.toISOString(),
         });
+
+        if (isDbSaveTick) {
+          telemetryLogsToInsert.push({
+            flightId: flight.id,
+            latitude: flight.lat,
+            longitude: flight.lng,
+            altitude: flight.alt,
+            speed: flight.speed,
+            heading: flight.heading,
+            timestamp: this.currentVirtualDate,
+          });
+        }
+
+        this.evaluateFlightStateTransition(flight);
       }
 
-      // Automatically transition states (e.g., Approaching -> Landed)
-      this.evaluateFlightStateTransition(flight);
-    }
+      // 4. DATABASE BATCH EXECUTION
+      if (isDbSaveTick) {
+        await this.injectArrivals();
 
-    // 4. Execute DB transactions in a batch to save connection pool
-    if (isDbSaveTick) {
-      try {
         await prisma.$transaction([
           ...dbUpdates,
           prisma.sensorLog.createMany({ data: logsToInsert }),
@@ -213,115 +234,170 @@ export class SimulationService {
         ]);
 
         const oneHourAgo = new Date(this.currentVirtualDate.getTime() - 60 * 60 * 1000);
-        await prisma.flightTelemetry.deleteMany({
-          where: { timestamp: { lt: oneHourAgo } },
-        });
-        await prisma.sensorLog.deleteMany({
-          where: { timestamp: { lt: oneHourAgo } },
-        });
-
-        console.log(`[Simulation Engine] Saved batch. Pruned old data.`);
-      } catch (error) {
-        console.error('Simulation engine DB Save Failed:', error);
+        await prisma.flightTelemetry.deleteMany({ where: { timestamp: { lt: oneHourAgo } } });
+        await prisma.sensorLog.deleteMany({ where: { timestamp: { lt: oneHourAgo } } });
       }
+    } catch (error) {
+      console.error('[Simulation Engine] Critical Tick Error:', error);
     }
   }
 
-  /**
-   * @description Manually trigger a demo scenario to instantly override baselines
-   */
-  public triggerScenario(scenario: string): { message: string } {
-    if (!this.isRunning) {
-      return { message: 'Simulation must be running to trigger scenarios.' };
+  // TASK 1: ADVANCED TIME-SERIES AI PREDICTION SIMULATION
+  private simulateAIPredictions(io: any) {
+    // Defined forecast horizons in hours (Quarter = ~2190h, Season = ~4380h)
+    const forecastHorizons = [6, 12, 18, 24, 2190, 4380];
+
+    for (const [id, state] of this.sensorStates.entries()) {
+      const predictions = forecastHorizons.map((horizonHours) => {
+        // 1. Determine Future Time Context
+        const futureDate = new Date(
+          this.currentVirtualDate.getTime() + horizonHours * 60 * 60 * 1000
+        );
+        const futureHour = futureDate.getHours();
+
+        // 2. Calculate Base Future Reality (What normally happens at this hour?)
+        const futureLoad = this.getPassengerLoadMultiplier(futureHour);
+        const futureSolar = this.getSolarIntensityMultiplier(futureHour);
+        let predictedVal = this.calculateBaseline(state.type, futureLoad, futureSolar);
+
+        // 3. Apply "Scenario Decay" Logic
+        // The AI assumes current anomalies will resolve over time.
+        // 60% impact at 6h, 30% at 12h, 10% at 24h, 0% for next Quarter/Season.
+        let scenarioImpact = 0;
+        if (horizonHours <= 6) scenarioImpact = 0.6;
+        else if (horizonHours <= 12) scenarioImpact = 0.3;
+        else if (horizonHours <= 24) scenarioImpact = 0.1;
+
+        if (this.activeScenario !== 'NONE' && scenarioImpact > 0) {
+          if (this.activeScenario === 'HEAVY_LOAD') {
+            if (state.type === 'CAMERA_AI_CROWD') predictedVal *= 1 + 2.5 * scenarioImpact;
+            if (state.type === 'TEMPERATURE') predictedVal += 5 * scenarioImpact;
+            if (state.type === 'CO2') predictedVal += 800 * scenarioImpact;
+            if (state.type === 'TILT_STRUCTURAL') predictedVal += 0.01 * scenarioImpact;
+          }
+          if (this.activeScenario === 'EARTHQUAKE') {
+            if (state.type === 'TILT_STRUCTURAL') predictedVal += 0.2 * scenarioImpact;
+            if (state.type === 'CAMERA_AI_CROWD')
+              predictedVal = Math.max(0, predictedVal - 200 * scenarioImpact);
+          }
+          if (this.activeScenario === 'TROPICAL_SQUALL') {
+            if (state.type === 'WIND_OUTDOOR') predictedVal += 20 * scenarioImpact;
+            if (state.type === 'TARMAC_TEMP') predictedVal -= 10 * scenarioImpact;
+          }
+          if (this.activeScenario === 'AC_FAILURE') {
+            if (state.type === 'TEMPERATURE') predictedVal += 8 * scenarioImpact;
+            if (state.type === 'CO2') predictedVal += 1000 * scenarioImpact;
+          }
+        }
+
+        // 4. Add AI Variance/Noise (10% fluctuation)
+        predictedVal += (Math.random() - 0.5) * (predictedVal * 0.1);
+
+        // 5. Calculate Confidence Score (Decays as we look further into the future)
+        // 6h = ~94%, 24h = ~85%, Quarter = ~70%, Season = ~45%
+        const baseConfidence = Math.max(0.4, 0.95 - (horizonHours / 4380) * 0.5);
+        const confidenceScore = Number(
+          (baseConfidence + (Math.random() * 0.05 - 0.025)).toFixed(2)
+        );
+
+        // 6. Format Number based on Sensor Type
+        const finalVal =
+          state.type === 'TILT_STRUCTURAL'
+            ? Number(predictedVal.toFixed(4))
+            : state.type === 'LIGHT_DENSITY' ||
+                state.type === 'CO2' ||
+                state.type === 'CAMERA_AI_CROWD'
+              ? Number(predictedVal.toFixed(0))
+              : Number(predictedVal.toFixed(2));
+
+        // Map hour numbers to UI friendly labels
+        let horizonLabel = `${horizonHours}H`;
+        if (horizonHours === 2190) horizonLabel = 'NEXT QTR';
+        if (horizonHours === 4380) horizonLabel = 'NEXT SEASON';
+
+        return {
+          timestamp: futureDate.toISOString(),
+          horizonLabel,
+          predictedValue: Math.max(0, finalVal), // Prevent negative predictions
+          confidenceScore,
+        };
+      });
+
+      // Emit the full time-series array for this specific sensor
+      io.emit('ai:prediction:stream', {
+        sensorId: id,
+        type: state.type,
+        predictions,
+      });
     }
+  }
+
+  // TASK 2 & 3: SCENARIO TRIGGERING, SWITCHING, AND STOPPING
+  public triggerScenario(scenario: ScenarioType): { message: string } {
+    if (!this.isRunning) return { message: 'Simulation must be running to trigger scenarios.' };
+
+    // Stop scenario gracefully
+    if (scenario === 'NONE') {
+      this.activeScenario = 'NONE';
+      return { message: 'Returned to normal simulation parameters.' };
+    }
+
+    this.activeScenario = scenario;
 
     switch (scenario) {
       case 'TROPICAL_SQUALL':
-        this.activeWeatherEvent = 'TROPICAL_SQUALL';
-        this.weatherEventTicksRemaining = 200;
-
-        // FLIGHT IMPACT: Force all approaching planes to veer off and hold
+        this.scenarioTicksRemaining = 200;
         for (const flight of this.flightStates.values()) {
           if (flight.status === 'APPROACHING') {
-            flight.heading = (flight.heading + 90) % 360; // Turn 90 degrees away from airport
-            flight.speed = 220; // Maintain holding speed
-            console.log(
-              `⚠️ ATC WARNING: Flight ${flight.flightNumber} diverted to holding pattern due to squall.`
-            );
+            flight.heading = (flight.heading + 90) % 360;
+            flight.speed = 220;
           }
         }
         break;
 
+      case 'EARTHQUAKE':
+        this.scenarioTicksRemaining = 30; // Short bursts
+        break;
+
+      case 'HEAVY_LOAD':
+        this.scenarioTicksRemaining = 300; // Extended duration
+        break;
+
       case 'TARMAC_OVERHEAT':
+        this.scenarioTicksRemaining = 150;
         for (const state of this.sensorStates.values()) {
           if (state.type === 'TARMAC_TEMP') state.value = 65.5;
         }
         break;
 
       case 'AC_FAILURE':
-        for (const state of this.sensorStates.values()) {
-          if (state.type === 'TEMPERATURE') state.value = 28.0;
-          if (state.type === 'CO2') state.value = 1500;
-          if (state.type === 'HUMIDITY') state.value = 75.0;
-        }
+        this.scenarioTicksRemaining = 150;
         break;
     }
 
-    // Force an immediate tick to broadcast the sudden spike via WebSockets
     this.tick();
-
-    return { message: `Scenario [${scenario}] triggered successfully.` };
+    return { message: `Scenario [${scenario}] active.` };
   }
 
-  // ==========================================
-  // MATHEMATICAL MODELS FOR LONG THANH AIRPORT
-  // ==========================================
-
-  /**
-   * @description Determines if a sudden tropical storm hits (Dong Nai specific)
-   */
-  private processWeatherEvents() {
-    if (this.activeWeatherEvent === 'NONE') {
-      // 0.05% chance per 3 seconds to spawn a squall (~1 storm every few hours)
-      // Only likely in afternoon (hours 13 to 18)
-      const hour = this.currentVirtualDate.getHours();
-      if (hour >= 13 && hour <= 18 && Math.random() < 0.0005) {
-        this.activeWeatherEvent = 'TROPICAL_SQUALL';
-        this.weatherEventTicksRemaining = 600; // Lasts for ~30 minutes (600 ticks * 3s)
-        console.log(`[WEATHER] 🌩️ Tropical Squall detected at Long Thanh!`);
-      }
-    } else {
-      this.weatherEventTicksRemaining--;
-      if (this.weatherEventTicksRemaining <= 0) {
-        this.activeWeatherEvent = 'NONE';
-        console.log(`[WEATHER] 🌤️ Tropical Squall has passed.`);
+  private processScenarioTimeouts() {
+    if (this.activeScenario !== 'NONE') {
+      this.scenarioTicksRemaining--;
+      if (this.scenarioTicksRemaining <= 0) {
+        console.log(`[SCENARIO] 🛑 ${this.activeScenario} has concluded.`);
+        this.activeScenario = 'NONE';
       }
     }
   }
 
-  /**
-   * @description Simulates SEA international flight schedules
-   * Returns a multiplier between 0.2 (empty) and 1.0 (packed)
-   */
   private getPassengerLoadMultiplier(hour: number): number {
-    // Peak 1: 06:00 - 10:00
     if (hour >= 6 && hour <= 10) return 0.8 + Math.random() * 0.2;
-    // Peak 2: 20:00 - 23:00
     if (hour >= 20 && hour <= 23) return 0.9 + Math.random() * 0.1;
-    // Dead of night: 01:00 - 04:00
     if (hour >= 1 && hour <= 4) return 0.1 + Math.random() * 0.1;
-    // Normal daytime
     return 0.4 + Math.random() * 0.2;
   }
 
-  /**
-   * @description Simulates Tropical Solar Curve for Dong Nai
-   * Returns 0 at night, up to 1.0 at 14:00 (2 PM)
-   */
   private getSolarIntensityMultiplier(hour: number): number {
-    if (hour < 6 || hour > 18) return 0; // Night
-    // Sine wave peaking at hour 14 (2 PM)
-    // Map hour 6->18 to 0->PI
+    if (hour < 6 || hour > 18) return 0;
     const phase = ((hour - 6) / 12) * Math.PI;
     return Math.sin(phase);
   }
@@ -340,36 +416,18 @@ export class SimulationService {
         return 26.0 + solar * 32.0;
       case 'WIND_INDOOR':
         return 0.2 + load * 0.4;
-
       case 'CAMERA_AI_CROWD':
-        // Calculates baseline people count in a zone (max 500 people per camera zone)
         return Math.floor(load * 500);
-
-      case 'LIGHT_DENSITY': {
-        // 1. Calculate Natural Sunlight (Lux) entering the building
-        const naturalLight = solar * 900;
-
-        // 2. Smart LED System (Target: Maintain at least 450 Lux)
-        let artificialLight = 0;
-        if (naturalLight < 450) {
-          artificialLight = 450 - naturalLight;
-        }
-
-        // The sensor reads the total combined light
-        return naturalLight + artificialLight;
-      }
-
+      case 'LIGHT_DENSITY':
+        return solar * 900 < 450 ? 450 : solar * 900;
       case 'TILT_STRUCTURAL':
         return solar * 0.004;
-
       default:
         return 0;
     }
   }
 
-  /**
-   * @description Calculates the next tick value using target-seeking random walks
-   */
+  // TASK 3: APPLY SCENARIO IMPACTS TO SENSORS
   private calculateNextValue(
     current: number,
     type: SensorType,
@@ -378,152 +436,168 @@ export class SimulationService {
   ): number {
     let target = this.calculateBaseline(type, load, solar);
 
-    // --- APPLY SUDDEN WEATHER / EVENT OVERRIDES ---
-    if (this.activeWeatherEvent === 'TROPICAL_SQUALL') {
-      if (type === 'WIND_OUTDOOR') target = 22.0;
+    if (this.activeScenario === 'TROPICAL_SQUALL') {
+      if (type === 'WIND_OUTDOOR') target = 25.0;
       if (type === 'TARMAC_TEMP') target = Math.max(28.0, target - 15.0);
-      if (type === 'HUMIDITY') target = 85.0;
-      if (type === 'WIND_INDOOR') target = 0.8; // Drafts blowing into the terminal
-      if (type === 'LIGHT_DENSITY') {
-        // Squall blocks the sun (solar drops), Smart LEDs instantly turn on to 450 Lux
-        target = 450.0;
-      }
-      if (type === 'TILT_STRUCTURAL') {
-        // Violent winds cause the building envelope to flex slightly
-        target = 0.015;
-      }
-      if (type === 'CAMERA_AI_CROWD') {
-        // Flights are delayed, causing passengers to pile up in terminal zones
-        target = Math.floor(target * 1.4);
-      }
+      if (type === 'HUMIDITY') target = 95.0;
     }
 
-    // --- ADD MICRO-SHOCKS (VIBRATIONS) ---
-    // Simulate a heavy aircraft landing/taxiing nearby (1% chance per tick)
-    if (type === 'TILT_STRUCTURAL' && Math.random() < 0.01) {
-      return current + 0.008; // Sudden momentary spike in tilt
+    if (this.activeScenario === 'HEAVY_LOAD') {
+      if (type === 'TEMPERATURE') target += 4.5;
+      if (type === 'CO2') target += 800;
+      if (type === 'CAMERA_AI_CROWD') target *= 3.5;
+      if (type === 'TILT_STRUCTURAL') target += 0.015; // Floor stress from crowd mass
     }
 
-    // --- SMOOTH MOVEMENT TOWARDS TARGET ---
+    if (this.activeScenario === 'EARTHQUAKE') {
+      if (type === 'TILT_STRUCTURAL') return current + Math.random() * 0.08; // Violent shaking
+      if (type === 'WIND_INDOOR') target += 2.0; // Air displacement
+      if (type === 'CAMERA_AI_CROWD') target = Math.max(0, target - 200); // Evacuation panic
+    }
+
+    if (this.activeScenario === 'AC_FAILURE') {
+      if (type === 'TEMPERATURE') target = 32.0;
+      if (type === 'CO2') target = 1800;
+    }
+
     const difference = target - current;
+    const step = difference * (type === 'LIGHT_DENSITY' ? 0.8 : 0.05);
 
-    // Light travels instantly, so light sensors update immediately.
-    // Temperature/CO2 change slowly.
-    const stepMultiplier = type === 'LIGHT_DENSITY' ? 0.8 : 0.05;
-    const step = difference * stepMultiplier;
-
-    // Add micro-fluctuations (noise)
     let noiseLimit = 0.1;
     if (type === 'CO2') noiseLimit = 3.0;
-    if (type === 'LIGHT_DENSITY') noiseLimit = 5.0; // Minor flickering or shadows
-    if (type === 'TILT_STRUCTURAL') noiseLimit = 0.0005; // Sensor noise
-    if (type === 'WIND_INDOOR') noiseLimit = 0.05;
-    if (type === 'CAMERA_AI_CROWD') noiseLimit = 15.0; // People moving in and out of frame
+    if (type === 'CAMERA_AI_CROWD') noiseLimit = 20.0;
+    if (type === 'TILT_STRUCTURAL') noiseLimit = 0.0005;
 
     const noise = (Math.random() - 0.5) * noiseLimit;
-
-    // Format safely to prevent negative values
     const nextValue = Math.max(0, current + step + noise);
 
-    // Format decimal places based on sensor precision requirements
     if (type === 'TILT_STRUCTURAL') return Number(nextValue.toFixed(4));
     if (type === 'LIGHT_DENSITY' || type === 'CO2' || type === 'CAMERA_AI_CROWD')
       return Number(nextValue.toFixed(0));
-
     return Number(nextValue.toFixed(2));
   }
 
-  // ==========================================
-  // AVIATION MATHEMATICAL MODELS
-  // ==========================================
-
-  /**
-   * @description Uses simple vector math to move the plane based on speed and heading
-   */
-  // private calculateNextFlightPosition(flight: FlightSimState) {
-  //   // Weather Impact: Tropical Squalls force planes to slow down and descend slower
-  //   let currentSpeed = flight.speed;
-  //   if (this.activeWeatherEvent === 'TROPICAL_SQUALL' && flight.status === 'APPROACHING') {
-  //     currentSpeed = currentSpeed * 0.8; // 20% speed reduction due to bad weather
-  //   }
-
-  //   // Convert heading to radians
-  //   const headingRad = flight.heading * (Math.PI / 180);
-
-  //   // Very simplified lat/lng translation per 3-second tick
-  //   // (In reality, 1 degree of lat is ~111km. We use a micro-multiplier for the demo scale)
-  //   const distancePerTick = (currentSpeed * 0.000001);
-
-  //   flight.lat += Math.cos(headingRad) * distancePerTick;
-  //   flight.lng += Math.sin(headingRad) * distancePerTick;
-
-  //   // Altitude logic
-  //   if (flight.status === 'APPROACHING') {
-  //     // Descend towards 0
-  //     flight.alt = Math.max(0, flight.alt - (flight.alt * 0.02));
-  //     // Slow down as they get closer to the ground
-  //     flight.speed = Math.max(140, flight.speed - 1);
-  //   }
-  // }
+  // TASK 4: CONTINUOUS FLIGHT LIFECYCLE (Movement & Routing)
   private calculateNextFlightPosition(flight: FlightSimState) {
-    let currentSpeed = flight.speed;
-    if (this.activeWeatherEvent === 'TROPICAL_SQUALL' && flight.status === 'APPROACHING') {
-      currentSpeed = currentSpeed * 0.8;
-    }
+    if (flight.speed === 0 || flight.status === 'PARKED') return;
 
     const headingRad = flight.heading * (Math.PI / 180);
-    const distancePerTick = currentSpeed * 0.00005;
+    const distancePerTick = flight.speed * 0.000008;
 
     flight.lat += Math.cos(headingRad) * distancePerTick;
     flight.lng += Math.sin(headingRad) * distancePerTick;
+  }
 
-    // THE FIX: Flat descent rate for the demo
-    if (flight.status === 'APPROACHING') {
-      // Drops 1,000 feet every 3 seconds -> Lands exactly in 45 seconds
-      flight.alt = Math.max(0, flight.alt - 1000);
-      // Decelerate faster so it doesn't overshoot the runway
-      flight.speed = Math.max(140, flight.speed - 3);
+  private evaluateFlightStateTransition(flight: FlightSimState) {
+    const distToTerminal =
+      Math.abs(flight.lat - this.TERMINAL_GATE_LAT) + Math.abs(flight.lng - this.TERMINAL_GATE_LNG);
+    const distToRunway =
+      Math.abs(flight.lat - this.RUNWAY_START_LAT) + Math.abs(flight.lng - this.RUNWAY_START_LNG);
+
+    // 1. Landed -> Taxiing to Gate
+    if (flight.status === 'LANDED') {
+      this.changeFlightStatus(flight, 'TAXIING', 15);
+      flight.heading = this.calculateHeading(
+        flight.lat,
+        flight.lng,
+        this.TERMINAL_GATE_LAT,
+        this.TERMINAL_GATE_LNG
+      );
+    }
+
+    // 2. Taxiing -> Parked at Gate
+    if (
+      flight.status === 'TAXIING' &&
+      distToTerminal < 0.0005 &&
+      flight.heading < 360 /* Approaching Terminal */
+    ) {
+      this.changeFlightStatus(flight, 'PARKED', 0);
+      console.log(`🛑 Flight ${flight.flightNumber} has PARKED at the terminal.`);
+    }
+
+    // 3. Parked -> Pushback (Automatically leave after ~45 seconds for demo loop)
+    if (flight.status === 'PARKED' && flight.ticksInState > 15) {
+      this.changeFlightStatus(flight, 'PUSHBACK', 0);
+    }
+
+    // 4. Pushback -> Taxiing to Runway
+    if (flight.status === 'PUSHBACK' && flight.ticksInState > 3) {
+      this.changeFlightStatus(flight, 'TAXIING', 15);
+      flight.heading = this.calculateHeading(
+        flight.lat,
+        flight.lng,
+        this.RUNWAY_START_LAT,
+        this.RUNWAY_START_LNG
+      );
+      console.log(`🛫 Flight ${flight.flightNumber} is TAXIING to runway.`);
+    }
+
+    // 5. Taxiing -> Departed (Leaves airport surface)
+    if (flight.status === 'TAXIING' && distToRunway < 0.0005 && flight.ticksInState > 10) {
+      this.flightService.updateStatus(flight.id, { status: 'DEPARTED' }).catch(console.error);
+      this.flightStates.delete(flight.id);
+      console.log(`✈️ Flight ${flight.flightNumber} has DEPARTED and exited Surface Monitoring.`);
     }
   }
 
-  /**
-   * @description Automates the State Machine so the demo runs itself
-   */
-  private evaluateFlightStateTransition(flight: FlightSimState) {
-    // If approaching and altitude hits 0, they have landed
-    if (flight.status === 'APPROACHING' && flight.alt <= 10) {
-      flight.status = 'LANDED';
-      flight.alt = 0;
-      flight.speed = 80; // Fast taxi speed off runway
+  private changeFlightStatus(flight: FlightSimState, newStatus: FlightStatus, speed: number) {
+    flight.status = newStatus;
+    flight.speed = speed;
+    flight.ticksInState = 0;
+    this.flightService.updateStatus(flight.id, { status: newStatus }).catch(console.error);
+  }
 
-      // Update DB and broadcast State Machine change
-      this.flightService.updateStatus(flight.id, { status: 'LANDED' }).catch(console.error);
-      console.log(`🛬 Flight ${flight.flightNumber} has LANDED.`);
+  private calculateHeading(lat1: number, lng1: number, lat2: number, lng2: number): number {
+    const dy = lat2 - lat1;
+    const dx = lng2 - lng1;
+    let theta = Math.atan2(dy, dx) * (180 / Math.PI);
+    if (theta < 0) theta += 360;
+    return theta;
+  }
 
-      // Immediately transition to TAXIING after landing
-      setTimeout(() => {
-        if (this.flightStates.has(flight.id)) {
-          const f = this.flightStates.get(flight.id)!;
-          f.status = 'TAXIING';
-          f.speed = 20; // Slow taxi to gate
-          this.flightService.updateStatus(f.id, { status: 'TAXIING' }).catch(console.error);
-        }
-      }, 6000); // Wait 2 ticks
+  private async injectArrivals() {
+    if (this.flightStates.size >= 5) return;
+
+    let approachingFlight = await prisma.flight.findFirst({ where: { status: 'APPROACHING' } });
+
+    // Infinite Recycler: Pull departed flights back in as approaching
+    if (!approachingFlight) {
+      const recycledFlight = await prisma.flight.findFirst({
+        where: { status: { in: ['DEPARTED', 'CANCELLED'] } },
+      });
+      if (recycledFlight) {
+        approachingFlight = await prisma.flight.update({
+          where: { id: recycledFlight.id },
+          data: { status: 'APPROACHING' },
+        });
+      }
     }
 
-    // If taxiing for a while (simulated by getting extremely close to center point), park them
-    if (flight.status === 'TAXIING') {
-      const distToCenter = Math.abs(flight.lat - this.LT_LAT) + Math.abs(flight.lng - this.LT_LNG);
-      if (distToCenter < 0.005) {
-        flight.status = 'PARKED';
-        flight.speed = 0;
+    if (approachingFlight) {
+      const activeRunway = 'RWY_05L';
+      this.flightStates.set(approachingFlight.id, {
+        id: approachingFlight.id,
+        flightNumber: approachingFlight.flightNumber,
+        status: 'LANDED',
+        assignedRunway: activeRunway,
+        lat: this.RUNWAY_START_LAT,
+        lng: this.RUNWAY_START_LNG,
+        alt: 0,
+        speed: 15,
+        heading: this.calculateHeading(
+          this.RUNWAY_START_LAT,
+          this.RUNWAY_START_LNG,
+          this.TERMINAL_GATE_LAT,
+          this.TERMINAL_GATE_LNG
+        ),
+        ticksInState: 0,
+      });
 
-        this.flightService.updateStatus(flight.id, { status: 'PARKED' }).catch(console.error);
-        console.log(`🛑 Flight ${flight.flightNumber} has PARKED.`);
-
-        // Remove from active simulation to save memory (they are now static)
-        this.flightStates.delete(flight.id);
-      }
+      await this.flightService.updateStatus(approachingFlight.id, { status: 'LANDED' });
+      await prisma.flight.update({
+        where: { id: approachingFlight.id },
+        data: { assignedRunway: activeRunway },
+      });
     }
   }
 }

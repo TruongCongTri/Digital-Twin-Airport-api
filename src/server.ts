@@ -9,6 +9,7 @@ import { env } from './common/configs/env';
 import app from './app';
 import { createServer } from 'http'; // Import native HTTP
 import { socketConfig } from './common/configs/socket'; // Import Socket.IO config
+import { SimulationService } from './modules/simulation/simulation.service';
 
 /**
  * @function checkDatabaseConnection
@@ -41,12 +42,39 @@ const startServer = async () => {
 
     const port = parseInt(env.PORT, 10);
 
-    httpServer.listen(port, () => {
+    // Assign to a variable so we can close it gracefully later
+    const serverInstance = httpServer.listen(port, () => {
       console.log(`=================================`);
       console.log(`API Server is running at: http://localhost:${port}`);
       console.log(`Accepting connections from: ${env.CLIENT_URL}`);
       console.log(`=================================`);
     });
+
+    // ==========================================
+    // GRACEFUL SHUTDOWN LOGIC
+    // ==========================================
+    const gracefulShutdown = async () => {
+      console.log('\n🛑 Shutting down gracefully...');
+
+      // 1. Stop the 3-second simulation loop to prevent zombie DB queries
+      const sim = SimulationService.getInstance();
+      sim.stop();
+      console.log('✅ Simulation engine stopped.');
+
+      // 2. Disconnect Database safely
+      await prisma.$disconnect();
+      console.log('✅ Database disconnected.');
+
+      // 3. Close HTTP Server
+      serverInstance.close(() => {
+        console.log('✅ HTTP server closed. Goodbye!');
+        process.exit(0);
+      });
+    };
+
+    // Catch Ctrl+C and Docker/PM2 shutdown signals
+    process.on('SIGINT', gracefulShutdown);
+    process.on('SIGTERM', gracefulShutdown);
   } catch (error) {
     console.error('Error starting server:', error);
     process.exit(1);

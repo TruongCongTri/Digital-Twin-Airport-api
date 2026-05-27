@@ -67,6 +67,16 @@ export class FlightService {
   }
 
   /**
+   * @description Fetches ONLY flights physically on the ground for the 3D Map
+   */
+  public async getActiveSurfaceFlights(query: GetFlightsQuery) {
+    const { total, data } = await this.flightRepository.getActiveSurfaceFlights(query);
+    const meta = PaginationMetaDto.create(query.page, query.limit, total);
+
+    return { data, meta };
+  }
+
+  /**
    * @method updateStatus
    * @description Advances a flight through its lifecycle using a strict State Machine.
    * @param id The UUID of the flight
@@ -86,18 +96,16 @@ export class FlightService {
 
     // 2. RESOURCE CLEANUP (Gate Release)
     // Release the gate immediately when the plane leaves it (Pushback/Taxiing out/Departed/Cancelled)
-    const gateReleasingStatuses: FlightStatus[] = ['PUSHBACK', 'TAXIING', 'DEPARTED', 'CANCELLED'];
+    const gateReleasingStatuses: FlightStatus[] = ['PUSHBACK', 'DEPARTED', 'CANCELLED', 'DIVERTED'];
 
-    // Ensure we only release it if it's an OUTBOUND taxi, not an INBOUND taxi.
-    // If current status is PARKED or BOARDING, they are leaving the gate.
+    // If the plane is entering a terminal state and it currently holds a gate, release it.
     if (gateReleasingStatuses.includes(newStatus) && flight.parkingStandId) {
-      if (flight.status === 'PARKED' || flight.status === 'BOARDING') {
-        await this.flightRepository.releaseParkingStandTx(id, flight.parkingStandId);
-      }
-      // If DEPARTED or CANCELLED, always release just to be safe
-      else if (newStatus === 'DEPARTED' || newStatus === 'CANCELLED') {
-        await this.flightRepository.releaseParkingStandTx(id, flight.parkingStandId);
-      }
+      await this.flightRepository.releaseParkingStandTx(id, flight.parkingStandId);
+
+      // Instantly notify the Next.js UI to turn the 3D gate model from "Red" back to "Green"
+      socketConfig
+        .getIO()
+        .emit('flight:allocation-changed', { flightId: id, parkingStandId: null });
     }
 
     // 3. APPLY UPDATE
