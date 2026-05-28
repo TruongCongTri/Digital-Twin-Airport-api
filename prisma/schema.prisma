@@ -164,6 +164,8 @@ model Sensor {
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
+  imageUrl        String?
+
   @@index([zoneId])
   @@index([type, status]) /// Optimized for "GET /sensors?type=CO2&status=ACTIVE"
   @@map("sensors")
@@ -204,6 +206,9 @@ model Flight {
 
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
+
+  imageUrl        String?
+  logoUrl         String?
 
   @@index([status])
   @@map("flights")

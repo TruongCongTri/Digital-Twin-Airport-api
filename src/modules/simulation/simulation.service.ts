@@ -2,6 +2,7 @@ import { prisma } from '@/common/configs/prisma';
 import { FlightStatus, SensorType } from '@/generated/client';
 import { socketConfig } from '@/common/configs/socket';
 import { FlightService } from '../flight/flight.service';
+import { LONG_THANH_COORDS } from '@/constants/airport-coordinates';
 
 export type ScenarioType =
   | 'NONE'
@@ -23,6 +24,10 @@ interface FlightSimState {
   speed: number; // knots
   heading: number; // degrees
   ticksInState: number; // Tracks how long a plane has been in its current status
+  route: { lat: number; lng: number }[];
+  currentWaypointIndex: number;
+  destinationType?: 'TERMINAL' | 'RUNWAY';
+  activeRouteId?: string | undefined;
 }
 
 export class SimulationService {
@@ -41,17 +46,13 @@ export class SimulationService {
   // Flight State
   private flightStates: Map<string, FlightSimState> = new Map();
   private readonly flightService: FlightService;
+  // Registry to track which routes are currently in use
+  private reservedRoutes: Set<string> = new Set();
 
   // --- ENVIRONMENT STATE ---
   private currentVirtualDate: Date = new Date();
   private activeScenario: ScenarioType = 'NONE';
   private scenarioTicksRemaining = 0;
-
-  // Long Thanh Airport Coordinates (Approximate Center/Runway)
-  private readonly RUNWAY_START_LAT = 10.772611;
-  private readonly RUNWAY_START_LNG = 107.04528;
-  private readonly TERMINAL_GATE_LAT = 10.7745; // Slightly North-East of Runway
-  private readonly TERMINAL_GATE_LNG = 107.047;
 
   // Make constructor private for Singleton pattern
   private constructor() {
@@ -63,6 +64,30 @@ export class SimulationService {
       SimulationService.instance = new SimulationService();
     }
     return SimulationService.instance;
+  }
+
+  private getRandomTerminalRoute() {
+    const terms = ['T1', 'T2', 'T3'] as const;
+    // Add "|| 'T1'" to guarantee to TypeScript that it will never be undefined
+    const term = terms[Math.floor(Math.random() * terms.length)] || 'T1';
+
+    return LONG_THANH_COORDS.ROUTES[term];
+  }
+
+  private determineClosestTerminal(flight: FlightSimState): 'T1' | 'T2' | 'T3' {
+    let closestTerm: 'T1' | 'T2' | 'T3' = 'T1';
+    let minDist = Infinity;
+
+    for (const term of ['T1', 'T2', 'T3'] as const) {
+      const startPt = LONG_THANH_COORDS.ROUTES[term].outbound[0];
+      if (!startPt) continue;
+      const dist = Math.abs(flight.lat - startPt.lat) + Math.abs(flight.lng - startPt.lng);
+      if (dist < minDist) {
+        minDist = dist;
+        closestTerm = term;
+      }
+    }
+    return closestTerm;
   }
 
   /**
@@ -98,17 +123,57 @@ export class SimulationService {
 
     activeGroundFlights.forEach((f) => {
       const isAtGate = f.status === 'PARKED' || f.status === 'PUSHBACK';
+
+      const routePaths = this.getRandomTerminalRoute() || LONG_THANH_COORDS.ROUTES.T1;
+      const isArrival = f.status === 'LANDED' || (f.status === 'TAXIING' && !isAtGate);
+      const activeRoute = isArrival ? routePaths.inbound : routePaths.outbound;
+      const destType: 'TERMINAL' | 'RUNWAY' = isArrival ? 'TERMINAL' : 'RUNWAY';
+
+      const startPoint = activeRoute[0];
+      if (!startPoint) return;
+
+      let assignedSpeed = 0;
+      let assignedRouteArray: { lat: number; lng: number }[] = [];
+      let waypointIndex = 0;
+      let activeLock: string | undefined = undefined;
+      // ✅ FIX: Safely rebuild the Reservation System locks on server restart
+      if (f.status === 'TAXIING') {
+        const requiredLock = isArrival ? 'INBOUND' : 'OUTBOUND';
+
+        if (!this.reservedRoutes.has(requiredLock)) {
+          // If the lock is free, this plane claims it and continues driving
+          this.reservedRoutes.add(requiredLock);
+          assignedSpeed = 25;
+          assignedRouteArray = activeRoute;
+          waypointIndex = 1;
+          activeLock = requiredLock;
+        } else {
+          // COLLISION RECOVERY: If a ghost plane already claimed this lock during boot,
+          // forcefully halt this plane and downgrade it so it waits its turn!
+          f.status = isArrival ? 'LANDED' : 'PUSHBACK';
+          this.flightService
+            .updateStatus(f.id, { status: f.status as FlightStatus })
+            .catch(console.error);
+        }
+      }
+
       this.flightStates.set(f.id, {
         id: f.id,
         flightNumber: f.flightNumber,
-        status: f.status,
+        status: f.status as FlightStatus,
         assignedRunway: activeRunway,
-        lat: isAtGate ? this.TERMINAL_GATE_LAT : this.RUNWAY_START_LAT,
-        lng: isAtGate ? this.TERMINAL_GATE_LNG : this.RUNWAY_START_LNG,
+        lat: startPoint.lat,
+        lng: startPoint.lng,
         alt: 0,
-        speed: f.status === 'PARKED' ? 0 : 15,
-        heading: isAtGate ? 225 : 45,
+        speed: assignedSpeed,
+        heading: 0,
         ticksInState: 0,
+        route: assignedRouteArray,
+        currentWaypointIndex: waypointIndex,
+        destinationType: destType,
+
+        // ✅ Restore the specific lock key to the plane's memory
+        activeRouteId: activeLock,
       });
 
       prisma.flight
@@ -193,6 +258,8 @@ export class SimulationService {
 
       for (const flight of this.flightStates.values()) {
         flight.ticksInState++;
+
+        this.evaluateFlightStateTransition(flight);
         this.calculateNextFlightPosition(flight);
 
         io.emit('flight:telemetry', {
@@ -480,63 +547,116 @@ export class SimulationService {
   // TASK 4: CONTINUOUS FLIGHT LIFECYCLE (Movement & Routing)
   private calculateNextFlightPosition(flight: FlightSimState) {
     if (flight.speed === 0 || flight.status === 'PARKED') return;
+    if (!flight.route || flight.route.length === 0) return;
+
+    const target = flight.route[flight.currentWaypointIndex];
+    if (!target) return;
+
+    flight.heading = this.calculateHeading(flight.lat, flight.lng, target.lat, target.lng);
 
     const headingRad = flight.heading * (Math.PI / 180);
-    const distancePerTick = flight.speed * 0.000008;
+    const distancePerTick = flight.speed * 0.000015;
 
-    flight.lat += Math.cos(headingRad) * distancePerTick;
-    flight.lng += Math.sin(headingRad) * distancePerTick;
+    // ✅ FIX 1: Longitude is the X-axis (cos), Latitude is the Y-axis (sin).
+    flight.lng += Math.cos(headingRad) * distancePerTick;
+    flight.lat += Math.sin(headingRad) * distancePerTick;
+
+    // ✅ FIX 2: Tightened the proximity threshold so they don't cut corners too early
+    const distToTarget = Math.abs(flight.lat - target.lat) + Math.abs(flight.lng - target.lng);
+    if (distToTarget < 0.0003) {
+      // Snap exactly to the waypoint to prevent micro-drifting over time
+      flight.lat = target.lat;
+      flight.lng = target.lng;
+      flight.currentWaypointIndex++;
+    }
   }
 
   private evaluateFlightStateTransition(flight: FlightSimState) {
-    const distToTerminal =
-      Math.abs(flight.lat - this.TERMINAL_GATE_LAT) + Math.abs(flight.lng - this.TERMINAL_GATE_LNG);
-    const distToRunway =
-      Math.abs(flight.lat - this.RUNWAY_START_LAT) + Math.abs(flight.lng - this.RUNWAY_START_LNG);
+    // 1. LANDED -> TAXIING (Request Global Inbound Route)
+    if (flight.status === 'LANDED' && (!flight.route || flight.route.length === 0)) {
+      // ✅ FIX: Check the GLOBAL 'INBOUND' lock instead of a terminal-specific one
+      if (!this.reservedRoutes.has('INBOUND')) {
+        this.reservedRoutes.add('INBOUND'); // Lock the global inbound path
 
-    // 1. Landed -> Taxiing to Gate
-    if (flight.status === 'LANDED') {
-      this.changeFlightStatus(flight, 'TAXIING', 15);
-      flight.heading = this.calculateHeading(
-        flight.lat,
-        flight.lng,
-        this.TERMINAL_GATE_LAT,
-        this.TERMINAL_GATE_LNG
-      );
+        const terms = ['T1', 'T2', 'T3'] as const;
+        const availableTerm = terms[Math.floor(Math.random() * terms.length)] || 'T1';
+
+        this.changeFlightStatus(flight, 'TAXIING', 25);
+        flight.destinationType = 'TERMINAL';
+        flight.route = LONG_THANH_COORDS.ROUTES[availableTerm].inbound;
+        flight.currentWaypointIndex = 1;
+        flight.activeRouteId = 'INBOUND'; // Store the lock key
+      } else {
+        console.log(
+          `⏳ Flight ${flight.flightNumber} waiting on runway. Another plane is currently inbound.`
+        );
+      }
     }
 
-    // 2. Taxiing -> Parked at Gate
-    if (
-      flight.status === 'TAXIING' &&
-      distToTerminal < 0.0005 &&
-      flight.heading < 360 /* Approaching Terminal */
-    ) {
-      this.changeFlightStatus(flight, 'PARKED', 0);
-      console.log(`🛑 Flight ${flight.flightNumber} has PARKED at the terminal.`);
+    // 2. TAXIING (Inbound) -> PARKED
+    if (flight.status === 'TAXIING' && flight.destinationType === 'TERMINAL') {
+      if (flight.currentWaypointIndex >= flight.route.length) {
+        this.changeFlightStatus(flight, 'PARKED', 0);
+
+        // Ensure they stop exactly on the terminal dot
+        const finalWaypoint = flight.route[flight.route.length - 1];
+        if (finalWaypoint) {
+          flight.lat = finalWaypoint.lat;
+          flight.lng = finalWaypoint.lng;
+        }
+
+        // ✅ FREE THE GLOBAL INBOUND LOCK
+        if (flight.activeRouteId === 'INBOUND') {
+          this.reservedRoutes.delete('INBOUND');
+          flight.activeRouteId = undefined;
+        }
+
+        console.log(`🛑 Flight ${flight.flightNumber} PARKED. Inbound taxiway is now clear.`);
+      }
     }
 
-    // 3. Parked -> Pushback (Automatically leave after ~45 seconds for demo loop)
+    // 3. PARKED -> PUSHBACK
     if (flight.status === 'PARKED' && flight.ticksInState > 15) {
       this.changeFlightStatus(flight, 'PUSHBACK', 0);
     }
 
-    // 4. Pushback -> Taxiing to Runway
+    // 4. PUSHBACK -> TAXIING (Request Global Outbound Route)
     if (flight.status === 'PUSHBACK' && flight.ticksInState > 3) {
-      this.changeFlightStatus(flight, 'TAXIING', 15);
-      flight.heading = this.calculateHeading(
-        flight.lat,
-        flight.lng,
-        this.RUNWAY_START_LAT,
-        this.RUNWAY_START_LNG
-      );
-      console.log(`🛫 Flight ${flight.flightNumber} is TAXIING to runway.`);
+      // ✅ FIX: Check the GLOBAL 'OUTBOUND' lock
+      if (!this.reservedRoutes.has('OUTBOUND')) {
+        this.reservedRoutes.add('OUTBOUND'); // Lock the global outbound path
+
+        const term = this.determineClosestTerminal(flight);
+
+        this.changeFlightStatus(flight, 'TAXIING', 25);
+        flight.destinationType = 'RUNWAY';
+        flight.route = LONG_THANH_COORDS.ROUTES[term].outbound;
+        flight.currentWaypointIndex = 1;
+        flight.activeRouteId = 'OUTBOUND'; // Store the lock key
+
+        console.log(`🛫 Flight ${flight.flightNumber} is TAXIING to runway from ${term}.`);
+      } else {
+        console.log(
+          `⏳ Flight ${flight.flightNumber} holding position at gate. Outbound taxiway is busy.`
+        );
+      }
     }
 
-    // 5. Taxiing -> Departed (Leaves airport surface)
-    if (flight.status === 'TAXIING' && distToRunway < 0.0005 && flight.ticksInState > 10) {
-      this.flightService.updateStatus(flight.id, { status: 'DEPARTED' }).catch(console.error);
-      this.flightStates.delete(flight.id);
-      console.log(`✈️ Flight ${flight.flightNumber} has DEPARTED and exited Surface Monitoring.`);
+    // 5. TAXIING (Outbound) -> DEPARTED
+    if (flight.status === 'TAXIING' && flight.destinationType === 'RUNWAY') {
+      if (flight.currentWaypointIndex >= flight.route.length) {
+        // ✅ FREE THE GLOBAL OUTBOUND LOCK
+        if (flight.activeRouteId === 'OUTBOUND') {
+          this.reservedRoutes.delete('OUTBOUND');
+          flight.activeRouteId = undefined;
+        }
+
+        this.flightService.updateStatus(flight.id, { status: 'DEPARTED' }).catch(console.error);
+        this.flightStates.delete(flight.id);
+        console.log(
+          `✈️ Flight ${flight.flightNumber} has DEPARTED. Outbound taxiway is now clear.`
+        );
+      }
     }
   }
 
@@ -556,11 +676,10 @@ export class SimulationService {
   }
 
   private async injectArrivals() {
-    if (this.flightStates.size >= 5) return;
+    if (this.flightStates.size >= 15) return;
 
     let approachingFlight = await prisma.flight.findFirst({ where: { status: 'APPROACHING' } });
 
-    // Infinite Recycler: Pull departed flights back in as approaching
     if (!approachingFlight) {
       const recycledFlight = await prisma.flight.findFirst({
         where: { status: { in: ['DEPARTED', 'CANCELLED'] } },
@@ -575,22 +694,28 @@ export class SimulationService {
 
     if (approachingFlight) {
       const activeRunway = 'RWY_05L';
+      // ✅ FIX 4: Grab a route immediately so it spawns perfectly on the runway
+      // const routePaths = this.getRandomTerminalRoute();
+
+      // All inbound routes start at the exact same physical landing coordinate
+      const landingSpot = LONG_THANH_COORDS.ROUTES.T1.inbound[0];
+      if (!landingSpot) return;
+
       this.flightStates.set(approachingFlight.id, {
         id: approachingFlight.id,
         flightNumber: approachingFlight.flightNumber,
         status: 'LANDED',
         assignedRunway: activeRunway,
-        lat: this.RUNWAY_START_LAT,
-        lng: this.RUNWAY_START_LNG,
+        // Spawn exactly at the landing coordinate
+        lat: landingSpot.lat,
+        lng: landingSpot.lng,
         alt: 0,
-        speed: 15,
-        heading: this.calculateHeading(
-          this.RUNWAY_START_LAT,
-          this.RUNWAY_START_LNG,
-          this.TERMINAL_GATE_LAT,
-          this.TERMINAL_GATE_LNG
-        ),
+        speed: 0,
+        heading: 0,
         ticksInState: 0,
+        route: [],
+        currentWaypointIndex: 0,
+        destinationType: 'TERMINAL',
       });
 
       await this.flightService.updateStatus(approachingFlight.id, { status: 'LANDED' });
