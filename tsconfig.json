@@ -5,7 +5,6 @@
     "module": "ESNext",
     "moduleResolution": "bundler", // Allow to import with out extension .js/.ts
     "lib": ["ES2022"],
-    "types": ["node"],
 
     /* 2. Paths Configuration */
     "rootDir": "./",
