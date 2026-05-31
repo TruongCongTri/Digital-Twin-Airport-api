@@ -4,12 +4,12 @@
  * Ensures infrastructure (Database) is ready before accepting incoming HTTP traffic.
  * @module Server
  */
-import { prisma } from './common/configs/prisma.js';
-import { env } from './common/configs/env.js';
-import app from './app.js';
-import { createServer } from 'http';
-import { socketConfig } from './common/configs/socket.js';
-import { SimulationService } from './modules/simulation/simulation.service.js';
+import { prisma } from './common/configs/prisma';
+import { env } from './common/configs/env';
+import app from './app';
+import { createServer } from 'http'; // Import native HTTP
+import { socketConfig } from './common/configs/socket'; // Import Socket.IO config
+import { SimulationService } from './modules/simulation/simulation.service';
 
 /**
  * @function checkDatabaseConnection
