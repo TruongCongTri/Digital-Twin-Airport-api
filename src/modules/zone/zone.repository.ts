@@ -1,4 +1,4 @@
-import { Prisma, ZoneType } from '@/generated/index';
+import { Prisma, ZoneType } from '@/generated/client';
 import { prisma } from '@/common/configs/prisma';
 import { BaseRepository } from '@/common/repositories/base.repository';
 import { CreateZoneDTO, GetZonesQuery } from './zone.schema';

@@ -1,4 +1,4 @@
-import { Prisma, FlightStatus, ParkingStand, Flight } from '@/generated/index';
+import { Prisma, FlightStatus, ParkingStand, Flight } from '@/generated/client';
 import { prisma } from '@/common/configs/prisma';
 import { BaseRepository } from '@/common/repositories/base.repository';
 import { AddTelemetryDTO, CreateFlightDTO, GetFlightsQuery } from './flight.schema';
