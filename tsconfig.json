@@ -2,8 +2,8 @@
   "compilerOptions": {
     /* 1. Target & Module System */
     "target": "ESNext",
-    "module": "ESNext",
-    "moduleResolution": "bundler", // Allow to import with out extension .js/.ts
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
 
     /* 2. Paths Configuration */
