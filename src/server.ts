@@ -25,6 +25,7 @@ process.on('unhandledRejection', (reason, promise) => {
 
 const startServer = async () => {
   try {
+    console.log('[System]: server.ts has started!');
     console.log('[System]: Starting initialization...');
 
     // 1. Database Check
