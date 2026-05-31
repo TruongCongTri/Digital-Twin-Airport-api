@@ -29,7 +29,7 @@ app.set('trust proxy', 1);
  */
 app.use(helmet());
 
-const whitelist = [env.CLIENT_URL];
+const whitelist = env.CLIENT_URL.split(',');
 app.use(
   cors({
     origin: function (origin, callback) {
