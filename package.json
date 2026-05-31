@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "cross-env PRISMA_CLIENT_ENGINE_TYPE=library tsx watch src/server.ts",
     "clean": "rimraf dist",
-    "build": "npm run clean && npx prisma generate && tsc && tsc-alias",
+    "build": "npm run clean && npx prisma generate && tsc && tsc-alias && cp -r src/generated dist/src/",
     "start": "node dist/src/server.js",
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write src/**/*.ts",
