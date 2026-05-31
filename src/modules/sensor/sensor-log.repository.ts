@@ -1,4 +1,4 @@
-import { Prisma, SensorLog, SensorType } from '@/generated/client';
+import { Prisma, SensorLog, SensorType } from '@/generated/index';
 import { BaseRepository } from '@/common/repositories/base.repository';
 import { GetSensorHistoryQuery } from './sensor.schema';
 

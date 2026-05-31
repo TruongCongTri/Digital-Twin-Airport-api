@@ -1,4 +1,5 @@
 import { createClient } from 'redis';
+import { env } from '../configs/env';
 
 class RedisCacheService {
   private client;
@@ -6,7 +7,7 @@ class RedisCacheService {
 
   constructor() {
     this.client = createClient({
-      url: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
+      url: env.REDIS_URL || 'redis://127.0.0.1:6379',
       socket: {
         // Circuit Breaker: Stop spamming the console after 3 failed attempts
         reconnectStrategy: (retries) => {

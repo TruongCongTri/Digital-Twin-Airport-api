@@ -7,6 +7,7 @@ export const FIELDS = {
   // --- SERVER ---
   DB: 'DATABASE_URL',
   CLIENT: 'CLIENT_URL',
+  REDIS: 'REDIS_URL',
 
   /* --- 1. GENERAL & INFRASTRUCTURE --- */
   ID: 'ID',

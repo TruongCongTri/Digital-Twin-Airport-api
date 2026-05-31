@@ -1,21 +1,18 @@
 /**
  * @file server.ts
  * @description Application bootstrap and server entry point.
- * Ensures infrastructure (Database) is ready before accepting incoming HTTP traffic.
- * @module Server
  */
 import { prisma } from './common/configs/prisma';
 import { env } from './common/configs/env';
 import app from './app';
-import { createServer } from 'http'; // Import native HTTP
-import { socketConfig } from './common/configs/socket'; // Import Socket.IO config
+import { createServer } from 'http';
+import { socketConfig } from './common/configs/socket';
 import { SimulationService } from './modules/simulation/simulation.service';
+import { createClient } from 'redis';
+import { createAdapter } from '@socket.io/redis-adapter';
+import { Server as SocketIOServer } from 'socket.io';
+import redisCache from './common/services/redis.service'; // Ensure this path is correct
 
-/**
- * @function checkDatabaseConnection
- * @description Verifies that the Prisma client can establish a secure connection to the database.
- * Exits the process with code 1 if the connection fails.
- */
 const checkDatabaseConnection = async () => {
   try {
     await prisma.$connect();
@@ -26,23 +23,41 @@ const checkDatabaseConnection = async () => {
   }
 };
 
-/**
- * @function startServer
- * @description Orchestrates the startup sequence: DB check -> HTTP listener.
- */
 const startServer = async () => {
   try {
+    // 1. Check Database
     await checkDatabaseConnection();
 
-    // 1. Create native HTTP server wrapping the Express app
+    // 2. Setup Redis for Pub/Sub and Cache
+    const pubClient = createClient({ url: env.REDIS_URL });
+    const subClient = pubClient.duplicate();
+
+    await Promise.all([pubClient.connect(), subClient.connect()]);
+    console.log('[Redis]: Pub/Sub clients connected.');
+
+    // --- TEST REDIS CONNECTION ---
+    try {
+      await redisCache.setEx('demo-ping', 60, 'pong');
+      const pingResult = await redisCache.get('demo-ping');
+      if (pingResult === 'pong') {
+        console.log('✅ [Redis]: Cache Service test passed.');
+      }
+    } catch (_err) {
+      console.error('⚠️ [Redis]: Cache Service test failed, but Pub/Sub is active.');
+    }
+
     const httpServer = createServer(app);
 
-    // 2. Attach Socket.IO to the native HTTP server
-    socketConfig.init(httpServer);
+    // 3. Initialize Socket.io with Redis Adapter
+    const io = new SocketIOServer(httpServer, {
+      adapter: createAdapter(pubClient, subClient),
+      cors: { origin: [env.CLIENT_URL], credentials: true },
+    });
+
+    // 4. Attach Socket.IO to the native HTTP server
+    socketConfig.init(io);
 
     const port = parseInt(env.PORT, 10);
-
-    // Assign to a variable so we can close it gracefully later
     const serverInstance = httpServer.listen(port, () => {
       console.log(`=================================`);
       console.log(`API Server is running at: http://localhost:${port}`);
@@ -56,23 +71,27 @@ const startServer = async () => {
     const gracefulShutdown = async () => {
       console.log('\n🛑 Shutting down gracefully...');
 
-      // 1. Stop the 3-second simulation loop to prevent zombie DB queries
+      // Stop simulation
       const sim = SimulationService.getInstance();
       sim.stop();
       console.log('✅ Simulation engine stopped.');
 
-      // 2. Disconnect Database safely
+      // Disconnect DB
       await prisma.$disconnect();
       console.log('✅ Database disconnected.');
 
-      // 3. Close HTTP Server
+      // Disconnect Redis
+      await pubClient.quit();
+      await subClient.quit();
+      console.log('✅ Redis clients disconnected.');
+
+      // Close Server
       serverInstance.close(() => {
         console.log('✅ HTTP server closed. Goodbye!');
         process.exit(0);
       });
     };
 
-    // Catch Ctrl+C and Docker/PM2 shutdown signals
     process.on('SIGINT', gracefulShutdown);
     process.on('SIGTERM', gracefulShutdown);
   } catch (error) {
