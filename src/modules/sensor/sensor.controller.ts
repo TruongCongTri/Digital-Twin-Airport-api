@@ -22,6 +22,21 @@ export class SensorController {
     this.sensorService = new SensorService();
   }
 
+  public getStaticSensors = async (_req: Request, res: Response) => {
+    try {
+      const data = await this.sensorService.getStaticSensors();
+
+      successResponse(res, {
+        statusCode: 200,
+        message: 'Static sensor metadata retrieved successfully.',
+        data,
+      });
+    } catch (error: any) {
+      console.error('🔥 [Sensor Controller] Crash:', error.message);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
   /**
    * @description [POST] Extracts body and initiates event creation.
    */

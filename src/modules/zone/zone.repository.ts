@@ -18,6 +18,19 @@ export class ZoneRepository extends BaseRepository<Prisma.ZoneDelegate> {
     super('zone');
   }
 
+  public async getStaticZones() {
+    // Only fetch the skeleton data needed for UI Dropdowns/Menus
+    return await prisma.zone.findMany({
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        floorLevel: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
+
   /**
    * @method create
    * @description Create a new Zone record

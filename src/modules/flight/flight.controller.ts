@@ -24,6 +24,22 @@ export class FlightController {
     this.flightService = new FlightService();
   }
 
+  public getStaticMetadata = async (_req: Request, res: Response) => {
+    try {
+      const data = await this.flightService.getStaticMetadata();
+
+      successResponse(res, {
+        statusCode: 200,
+        message: 'Static flight metadata retrieved successfully.',
+        data,
+      });
+    } catch (error: any) {
+      // ✅ This will print the EXACT reason it is crashing to your backend terminal
+      console.error('🔥 [Flight Controller] Crash:', error.message);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
   /**
    * @method create
    * @route POST /api/v1/flights

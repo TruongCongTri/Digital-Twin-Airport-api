@@ -16,12 +16,37 @@ import { AppError } from '@/common/errors/app.error';
 import { socketConfig } from '@/common/configs/socket';
 import { FlightStatus } from '@/generated/client';
 import { PaginationMetaDto } from '@/data/dtos/pagination.dto';
+import redisClient from '@/common/services/redis.service';
 
 export class FlightService {
   private readonly flightRepository: FlightRepository;
 
   constructor() {
     this.flightRepository = new FlightRepository();
+  }
+
+  public async getStaticMetadata() {
+    const cacheKey = 'static:flights:metadata';
+
+    try {
+      // 1. Check Redis First (O(1) Speed)
+      const cached = await redisClient.get(cacheKey);
+      if (cached) return JSON.parse(cached);
+    } catch (error) {
+      console.warn('[Redis] Cache read failed, falling back to DB', error);
+    }
+
+    // 2. Fallback to DB (Only fetch immutable data)
+    const flights = await this.flightRepository.getStaticMetadata();
+
+    try {
+      // 3. Save to Redis (Cache for 1 Hour)
+      await redisClient.setEx(cacheKey, 3600, JSON.stringify(flights));
+    } catch (error) {
+      console.warn('[Redis] Cache write failed', error);
+    }
+
+    return flights;
   }
 
   /**
@@ -31,7 +56,16 @@ export class FlightService {
    * @returns The newly created flight object
    */
   public async create(data: CreateFlightDTO) {
-    return await this.flightRepository.create(data);
+    const newFlight = await this.flightRepository.create(data);
+
+    // ✅ Clear the cache so the next UI load fetches the fresh DB state
+    try {
+      await redisClient.del('static:flights:metadata');
+    } catch (error) {
+      console.warn('[Redis] Failed to clear cache', error);
+    }
+
+    return newFlight;
   }
 
   /**
@@ -91,28 +125,41 @@ export class FlightService {
     const newStatus = data.status as FlightStatus;
 
     // 1. STATE MACHINE VALIDATION
-    // Prevent illogical jumps (e.g., 'SCHEDULED' directly to 'PARKED')
     this.validateStatusTransition(flight.status, newStatus);
 
     // 2. RESOURCE CLEANUP (Gate Release)
-    // Release the gate immediately when the plane leaves it (Pushback/Taxiing out/Departed/Cancelled)
     const gateReleasingStatuses: FlightStatus[] = ['PUSHBACK', 'DEPARTED', 'CANCELLED', 'DIVERTED'];
-
-    // If the plane is entering a terminal state and it currently holds a gate, release it.
     if (gateReleasingStatuses.includes(newStatus) && flight.parkingStandId) {
       await this.flightRepository.releaseParkingStandTx(id, flight.parkingStandId);
-
-      // Instantly notify the Next.js UI to turn the 3D gate model from "Red" back to "Green"
       socketConfig
         .getIO()
         .emit('flight:allocation-changed', { flightId: id, parkingStandId: null });
     }
 
-    // 3. APPLY UPDATE
-    const updated = await this.flightRepository.update(id, { status: newStatus });
+    // ✅ 3. DEDUCE DIRECTION FROM STATE MACHINE
+    let updatedDirection: any = undefined; // 'INBOUND' | 'OUTBOUND' | 'TURNAROUND'
 
-    // 4. BROADCAST EVENT
-    // Instantly notify the Next.js UI to update the Dispatcher Dashboard
+    if (['SCHEDULED', 'APPROACHING', 'LANDED'].includes(newStatus)) {
+      updatedDirection = 'INBOUND';
+    } else if (['PARKED', 'BOARDING'].includes(newStatus)) {
+      updatedDirection = 'TURNAROUND';
+    } else if (['PUSHBACK', 'DEPARTED'].includes(newStatus)) {
+      updatedDirection = 'OUTBOUND';
+    } else if (newStatus === 'TAXIING') {
+      // Taxiing inherits direction from the previous state
+      if (flight.status === 'LANDED') updatedDirection = 'INBOUND';
+      if (flight.status === 'PUSHBACK') updatedDirection = 'OUTBOUND';
+    }
+
+    // 4. APPLY UPDATE (Inject the calculated direction if it changed)
+    const updatePayload: any = { status: newStatus };
+    if (updatedDirection) {
+      updatePayload.direction = updatedDirection;
+    }
+
+    const updated = await this.flightRepository.update(id, updatePayload);
+
+    // 5. BROADCAST EVENT
     socketConfig.getIO().emit('flight:status-changed', updated);
 
     return updated;
@@ -184,6 +231,7 @@ export class FlightService {
       flightId: id,
       flightNumber: flight.flightNumber,
       status: flight.status,
+      dir: flight.direction,
       ...data,
       timestamp: telemetry.timestamp,
     });

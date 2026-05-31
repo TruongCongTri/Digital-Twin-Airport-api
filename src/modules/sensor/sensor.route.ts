@@ -55,6 +55,8 @@ export class SensorRoute {
     // [GET] METADATA (Types & Statuses for UI)
     this.router.get(ENDPOINTS.SENSOR.TYPES, this.sensorController.getMetadata);
 
+    this.router.get(ENDPOINTS.SENSOR.STATIC, this.sensorController.getStaticSensors);
+
     // [GET] GET DETAILS OF Sensor BY ID
     this.router.get(
       ENDPOINTS.SENSOR.DETAIL,

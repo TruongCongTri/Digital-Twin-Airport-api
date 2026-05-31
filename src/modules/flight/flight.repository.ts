@@ -12,6 +12,20 @@ export class FlightRepository extends BaseRepository<Flight> {
     super('flight');
   }
 
+  public async getStaticMetadata() {
+    return await prisma.flight.findMany({
+      select: {
+        id: true,
+        flightNumber: true,
+        airline: true,
+        origin: true,
+        destination: true,
+        logoUrl: true,
+        imageUrl: true,
+      },
+    });
+  }
+
   /**
    * @method create
    * @description Creates a new scheduled flight. (Status defaults to SCHEDULED in DB)

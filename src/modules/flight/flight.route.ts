@@ -68,6 +68,8 @@ export class FlightRoute {
       this.flightController.getAll
     );
 
+    this.router.get(ENDPOINTS.FLIGHT.STATIC, this.flightController.getStaticMetadata);
+
     // 2. STATIC/SPECIFIC ROUTES (MUST BE PLACED BEFORE /:id ROUTES)
     // [GET] /api/v1/flights/active
     this.router.get(

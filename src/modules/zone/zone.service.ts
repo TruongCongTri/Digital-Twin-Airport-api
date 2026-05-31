@@ -2,7 +2,7 @@ import { ZoneRepository } from './zone.repository';
 import { CreateZoneDTO, GetZonesQuery, UpdateZoneDTO } from './zone.schema';
 import { AppError } from '@/common/errors/app.error';
 import { PaginationMetaDto } from '@/data/dtos/pagination.dto';
-
+import redisClient from '@/common/services/redis.service';
 /**
  * @class ZoneService
  * @description Orchestrates business logic, verifies entity existence before mutations,
@@ -13,6 +13,28 @@ export class ZoneService {
 
   constructor() {
     this.zoneRepository = new ZoneRepository();
+  }
+
+  public async getStaticZones() {
+    const cacheKey = 'static:zones:metadata';
+
+    try {
+      const cached = await redisClient.get(cacheKey);
+      if (cached) return JSON.parse(cached);
+    } catch (error) {
+      console.warn('[Redis] Zone cache read failed', error);
+    }
+
+    const zones = await this.zoneRepository.getStaticZones();
+
+    try {
+      // Cache for 24 hours since airport zones basically never change
+      await redisClient.setEx(cacheKey, 86400, JSON.stringify(zones));
+    } catch (error) {
+      console.warn('[Redis] Zone cache write failed', error);
+    }
+
+    return zones;
   }
 
   /**

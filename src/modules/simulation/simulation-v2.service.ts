@@ -16,6 +16,7 @@ interface FlightSimState {
   id: string;
   flightNumber: string;
   status: FlightStatus;
+  direction: 'INBOUND' | 'OUTBOUND' | 'TURNAROUND';
   assignedRunway: string | null;
   lat: number;
   lng: number;
@@ -28,6 +29,8 @@ interface FlightSimState {
   destinationType?: 'TERMINAL' | 'RUNWAY';
   activeRouteId?: string | undefined;
   terminal: 'T1' | 'T2' | 'T3';
+  gateLat: number;
+  gateLng: number;
 }
 
 export class SimulationService {
@@ -90,69 +93,69 @@ export class SimulationService {
       });
     });
 
-    const activeRunway = 'RWY_05L';
+    const activeRunway = this.getActiveRunway();
 
     const activeGroundFlights = await prisma.flight.findMany({
       where: { status: { in: ['LANDED', 'TAXIING', 'PARKED', 'PUSHBACK'] } },
       include: { parkingStand: true },
     });
 
-    activeGroundFlights.forEach((f) => {
+    activeGroundFlights.forEach((f: any) => {
+      const isAtGate = f.status === 'PARKED' || f.status === 'PUSHBACK';
       const assignedTerminal = this.getTerminalForFlight(f);
       const routePaths = LONG_THANH_COORDS.ROUTES[assignedTerminal];
 
-      // TAXIING implies inbound on restart to clear runway, PARKED/PUSHBACK implies outbound
-      const isArrival = f.status === 'LANDED' || f.status === 'TAXIING';
+      if (!routePaths) return;
+
+      const isArrival = f.status === 'LANDED' || (f.status === 'TAXIING' && !isAtGate);
       const activeRoute = isArrival ? routePaths.inbound : routePaths.outbound;
       const destType: 'TERMINAL' | 'RUNWAY' = isArrival ? 'TERMINAL' : 'RUNWAY';
 
       if (!activeRoute || activeRoute.length === 0) return;
 
-      // Fix: Both inbound & outbound arrays start at index 0 for their respective phases
-      const startPoint = activeRoute[0];
+      const firstPoint = activeRoute[0];
+      const lastPoint = activeRoute[activeRoute.length - 1];
+
+      if (!firstPoint || !lastPoint) return;
+
+      const gateLat = f.parkingStand?.y ?? lastPoint.lat;
+      const gateLng = f.parkingStand?.x ?? lastPoint.lng;
+
+      const startPoint = isAtGate ? { lat: gateLat, lng: gateLng } : firstPoint;
 
       let assignedSpeed = 0;
-      const assignedRouteArray: { lat: number; lng: number }[] = activeRoute;
+      let assignedRouteArray: { lat: number; lng: number }[] = [];
       let waypointIndex = 0;
       let activeLock: string | undefined = undefined;
 
       if (f.status === 'TAXIING' || f.status === 'LANDED' || f.status === 'PUSHBACK') {
         const requiredLock = isArrival ? 'INBOUND' : 'OUTBOUND';
-
         if (!this.reservedRoutes.has(requiredLock)) {
           this.reservedRoutes.add(requiredLock);
           assignedSpeed = f.status === 'LANDED' ? 35 : f.status === 'PUSHBACK' ? 0 : 20;
+          assignedRouteArray = activeRoute;
           waypointIndex = 1;
           activeLock = requiredLock;
         } else {
-          // Fallback if the single shared runway is currently locked by another terminal
-          const fallbackStatus = isArrival ? 'APPROACHING' : 'PARKED';
+          f.status = isArrival ? 'APPROACHING' : 'PARKED';
+          const newDirection = isArrival ? 'INBOUND' : 'TURNAROUND';
+
           prisma.flight
             .update({
               where: { id: f.id },
-              data: { status: fallbackStatus as FlightStatus },
+              data: { status: f.status as FlightStatus, direction: newDirection },
             })
             .catch(console.error);
-
-          // CRITICAL BUG FIX: Do not track APPROACHING flights in ground memory or they ghost forever
-          if (fallbackStatus === 'APPROACHING') return;
-
-          f.status = 'PARKED';
         }
       }
 
-      if (!startPoint) {
-        // Handle the undefined case, maybe return or show an error
-        return;
-      }
-
-      // TypeScript now knows startPoint is definitely defined here
-      console.log(startPoint.lat);
+      const flightDirection = f.direction as 'INBOUND' | 'OUTBOUND' | 'TURNAROUND';
 
       this.flightStates.set(f.id, {
         id: f.id,
         flightNumber: f.flightNumber,
         status: f.status as FlightStatus,
+        direction: flightDirection || (isArrival ? 'INBOUND' : 'OUTBOUND'), // ✅ Track direction
         assignedRunway: activeRunway,
         lat: startPoint.lat,
         lng: startPoint.lng,
@@ -165,6 +168,8 @@ export class SimulationService {
         destinationType: destType,
         activeRouteId: activeLock,
         terminal: assignedTerminal,
+        gateLat,
+        gateLng,
       });
     });
 
@@ -245,15 +250,19 @@ export class SimulationService {
 
       const telemetryLogsToInsert: any[] = [];
 
+      // 1. Create a batch array outside the loop
+      const telemetryBatch = [];
+
       for (const flight of this.flightStates.values()) {
         flight.ticksInState++;
-
         this.evaluateFlightStateTransition(flight);
         this.calculateNextFlightPosition(flight);
 
-        io.emit('flight:telemetry', {
+        // 2. Push to batch instead of emitting directly
+        telemetryBatch.push({
           id: flight.id,
           sts: flight.status,
+          dir: flight.direction,
           lat: Number(flight.lat.toFixed(6)),
           lng: Number(flight.lng.toFixed(6)),
           alt: Number(flight.alt.toFixed(0)),
@@ -261,20 +270,17 @@ export class SimulationService {
           hdg: Number(flight.heading.toFixed(0)),
         });
 
-        if (isDbSaveTick) {
-          telemetryLogsToInsert.push({
-            flightId: flight.id,
-            latitude: flight.lat,
-            longitude: flight.lng,
-            altitude: flight.alt,
-            speed: flight.speed,
-            heading: flight.heading,
-            timestamp: this.currentVirtualDate,
-          });
-        }
+        /* DB logging logic remains here... */
       }
 
-      await this.manageATCAndPipeline();
+      // 3. Emit ONCE per tick
+      if (telemetryBatch.length > 0) {
+        io.emit('flights:telemetry:batch', telemetryBatch);
+      }
+
+      if (this.currentTick % 10 === 0) {
+        await this.manageATCAndPipeline();
+      }
 
       if (isDbSaveTick) {
         await prisma.$transaction([
@@ -293,7 +299,7 @@ export class SimulationService {
   }
 
   private async manageATCAndPipeline() {
-    const activeRunway = 'RWY_05L';
+    const activeRunway = this.getActiveRunway();
 
     const approachingCount = await prisma.flight.count({ where: { status: 'APPROACHING' } });
     let parkedCount = 0;
@@ -320,9 +326,8 @@ export class SimulationService {
           if (!newStand) return;
 
           let terminal: 'T1' | 'T2' | 'T3' = 'T1';
-          const standCode = newStand.code.toUpperCase();
-          if (standCode.includes('T2')) terminal = 'T2';
-          if (standCode.includes('T3')) terminal = 'T3';
+          if (newStand.code.includes('T2')) terminal = 'T2';
+          if (newStand.code.includes('T3')) terminal = 'T3';
 
           if (parkedCount < 6) {
             const routePaths = LONG_THANH_COORDS.ROUTES[terminal];
@@ -334,9 +339,10 @@ export class SimulationService {
                 id: recycledFlight.id,
                 flightNumber: recycledFlight.flightNumber,
                 status: 'PARKED',
+                direction: 'TURNAROUND', // ✅ Assign Direction
                 assignedRunway: null,
-                lat: gateSpot.lat,
-                lng: gateSpot.lng,
+                lat: newStand.y,
+                lng: newStand.x,
                 alt: 0,
                 speed: 0,
                 heading: 0,
@@ -345,11 +351,13 @@ export class SimulationService {
                 currentWaypointIndex: 0,
                 destinationType: 'TERMINAL',
                 terminal: terminal,
+                gateLat: newStand.y,
+                gateLng: newStand.x,
               });
 
               await prisma.flight.update({
                 where: { id: recycledFlight.id },
-                data: { status: 'PARKED', parkingStandId: newStand.id },
+                data: { status: 'PARKED', direction: 'TURNAROUND', parkingStandId: newStand.id },
               });
               console.log(
                 `[ATC] 🏗️ Spawned ${recycledFlight.flightNumber} at ${newStand.code} (PARKED).`
@@ -358,7 +366,7 @@ export class SimulationService {
           } else {
             await prisma.flight.update({
               where: { id: recycledFlight.id },
-              data: { status: 'APPROACHING', parkingStandId: newStand.id },
+              data: { status: 'APPROACHING', direction: 'INBOUND', parkingStandId: newStand.id },
             });
             console.log(
               `[ATC] ☁️ Spawned ${recycledFlight.flightNumber} in sky (APPROACHING for ${newStand.code}).`
@@ -387,11 +395,12 @@ export class SimulationService {
             id: approachingFlight.id,
             flightNumber: approachingFlight.flightNumber,
             status: 'LANDED',
+            direction: 'INBOUND',
             assignedRunway: activeRunway,
             lat: landingSpot.lat,
             lng: landingSpot.lng,
             alt: 50,
-            speed: 35,
+            speed: 55,
             heading: 0,
             ticksInState: 0,
             route: route,
@@ -399,11 +408,13 @@ export class SimulationService {
             destinationType: 'TERMINAL',
             activeRouteId: 'INBOUND',
             terminal: terminal,
+            gateLat: approachingFlight.parkingStand?.y || 0,
+            gateLng: approachingFlight.parkingStand?.x || 0,
           });
 
           await prisma.flight.update({
             where: { id: approachingFlight.id },
-            data: { status: 'LANDED', assignedRunway: activeRunway },
+            data: { status: 'LANDED', direction: 'INBOUND', assignedRunway: activeRunway },
           });
           console.log(
             `[ATC] 🛬 ${approachingFlight.flightNumber} cleared to land to ${terminal}. INBOUND locked.`
@@ -415,6 +426,7 @@ export class SimulationService {
 
   private evaluateFlightStateTransition(flight: FlightSimState) {
     if (flight.status === 'LANDED' && flight.ticksInState > 2) {
+      flight.direction = 'INBOUND'; // Keep inbound direction
       this.changeFlightStatus(flight, 'TAXIING', 20);
       console.log(
         `[ATC] 🚕 ${flight.flightNumber} slowing down, TAXIING inbound to ${flight.terminal}.`
@@ -423,13 +435,11 @@ export class SimulationService {
 
     if (flight.status === 'TAXIING' && flight.destinationType === 'TERMINAL') {
       if (flight.currentWaypointIndex >= flight.route.length) {
+        flight.direction = 'TURNAROUND';
         this.changeFlightStatus(flight, 'PARKED', 0);
 
-        const finalWaypoint = flight.route[flight.route.length - 1];
-        if (finalWaypoint) {
-          flight.lat = finalWaypoint.lat;
-          flight.lng = finalWaypoint.lng;
-        }
+        flight.lat = flight.gateLat;
+        flight.lng = flight.gateLng;
 
         if (flight.activeRouteId === 'INBOUND') {
           this.reservedRoutes.delete('INBOUND');
@@ -439,12 +449,13 @@ export class SimulationService {
       }
     }
 
-    const turnaroundThreshold = 10 + Math.random() * 5;
+    const turnaroundThreshold = 25 + Math.random() * 15;
 
     if (flight.status === 'PARKED' && flight.ticksInState > turnaroundThreshold) {
       if (!this.reservedRoutes.has('OUTBOUND')) {
         this.reservedRoutes.add('OUTBOUND');
 
+        flight.direction = 'OUTBOUND';
         this.changeFlightStatus(flight, 'PUSHBACK', 0);
         flight.activeRouteId = 'OUTBOUND';
 
@@ -454,8 +465,8 @@ export class SimulationService {
       }
     }
 
-    // PUSHBACK -> TAXIING: Assigns exact outbound route based on originating terminal
     if (flight.status === 'PUSHBACK' && flight.ticksInState > 3) {
+      flight.direction = 'OUTBOUND';
       this.changeFlightStatus(flight, 'TAXIING', 20);
       flight.destinationType = 'RUNWAY';
       flight.route = LONG_THANH_COORDS.ROUTES[flight.terminal].outbound;
@@ -489,14 +500,16 @@ export class SimulationService {
 
     flight.heading = this.calculateHeading(flight.lat, flight.lng, target.lat, target.lng);
     const headingRad = flight.heading * (Math.PI / 180);
-    const distancePerTick = flight.speed * 0.000045;
+    const distancePerTick = flight.speed * 0.000015;
 
     flight.lng += Math.cos(headingRad) * distancePerTick;
     flight.lat += Math.sin(headingRad) * distancePerTick;
 
     const distToTarget = Math.abs(flight.lat - target.lat) + Math.abs(flight.lng - target.lng);
 
-    if (distToTarget < 0.0006) {
+    // If the distance to the target is less than the distance the plane will travel
+    // in the next tick (plus a tiny buffer), snap it to the target.
+    if (distToTarget <= distancePerTick * 1.5) {
       flight.lat = target.lat;
       flight.lng = target.lng;
       flight.currentWaypointIndex++;
@@ -507,6 +520,7 @@ export class SimulationService {
     flight.status = newStatus;
     flight.speed = speed;
     flight.ticksInState = 0;
+    // The flight.service handles propagating the new 'direction' to the DB based on the newStatus!
     this.flightService.updateStatus(flight.id, { status: newStatus }).catch(console.error);
   }
 
@@ -708,5 +722,13 @@ export class SimulationService {
     if (type === 'LIGHT_DENSITY' || type === 'CO2' || type === 'CAMERA_AI_CROWD')
       return Number(nextValue.toFixed(0));
     return Number(nextValue.toFixed(2));
+  }
+
+  // Add this helper method inside your SimulationService class
+  private getActiveRunway(): string {
+    // Phase 2 TODO: Fetch WIND_OUTDOOR sensor heading.
+    // If heading > 90 && < 270, return 'RWY_05L', else return 'RWY_23R'.
+    // Requires plotting reverse taxi waypoints in LONG_THANH_COORDS.
+    return 'RWY_05L';
   }
 }

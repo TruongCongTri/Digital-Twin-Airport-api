@@ -17,6 +17,21 @@ export class ZoneController {
     this.zoneService = new ZoneService();
   }
 
+  public getStaticZones = async (_req: Request, res: Response) => {
+    try {
+      const data = await this.zoneService.getStaticZones();
+
+      successResponse(res, {
+        statusCode: 200,
+        message: 'Static zone metadata retrieved successfully.',
+        data,
+      });
+    } catch (error: any) {
+      console.error('🔥 [Zone Controller] Crash:', error.message);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
   /**
    * @description [POST] Extracts body and initiates event creation.
    */

@@ -13,6 +13,26 @@ export class SensorRepository extends BaseRepository<Prisma.SensorDelegate> {
     super('sensor');
   }
 
+  public async getStaticSensors() {
+    return await prisma.sensor.findMany({
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        x: true,
+        y: true,
+        z: true,
+        zone: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        imageUrl: true,
+      },
+    });
+  }
+
   /**
    * @method create
    * @description Create a new Sensor record mapped to a Zone

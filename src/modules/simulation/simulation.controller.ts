@@ -1,10 +1,10 @@
 import { Request, Response } from 'express';
-import { ScenarioType, SimulationService } from './simulation.service';
+import { ScenarioType, SimulationService } from './simulation-v2.service';
 import { successResponse } from '@/common/utils/responses/api-response';
 import { TriggerScenarioDTO } from './simulation.schema';
 
 export class SimulationController {
-  private readonly simulationService: SimulationService;
+  public readonly simulationService: SimulationService;
 
   constructor() {
     // Inject the Singleton instance
@@ -19,6 +19,15 @@ export class SimulationController {
   public stop = async (_req: Request, res: Response) => {
     const data = this.simulationService.stop();
     successResponse(res, { message: data.message, data });
+  };
+  public reboot = async (_req: Request, res: Response) => {
+    const data = await this.simulationService.reboot();
+    successResponse(res, { message: data.message, data });
+  };
+
+  public getStatus = (_req: Request, res: Response) => {
+    const data = this.simulationService.getStatus();
+    successResponse(res, { message: 'Status retrieved', data });
   };
 
   public triggerScenario = async (req: Request, res: Response) => {

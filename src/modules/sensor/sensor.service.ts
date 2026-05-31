@@ -13,7 +13,7 @@ import { ERROR_CODES } from '@/constants/error-codes';
 import { MESSAGES } from '@/constants/messages';
 import { RESOURCES } from '@/constants/resources';
 import { PaginationMetaDto } from '@/data/dtos/pagination.dto';
-
+import redisClient from '@/common/services/redis.service';
 /**
  * @class SensorService
  * @description Orchestrates business logic, verifies entity existence before mutations,
@@ -26,6 +26,30 @@ export class SensorService {
   constructor() {
     this.sensorRepository = new SensorRepository();
     this.sensorLogRepository = new SensorLogRepository();
+  }
+
+  public async getStaticSensors() {
+    const cacheKey = 'static:sensors:metadata';
+
+    try {
+      // 1. Check Redis First
+      const cached = await redisClient.get(cacheKey);
+      if (cached) return JSON.parse(cached);
+    } catch (error) {
+      console.warn('[Redis] Cache read failed for sensors, falling back to DB', error);
+    }
+
+    // 2. Fallback to DB
+    const sensors = await this.sensorRepository.getStaticSensors();
+
+    try {
+      // 3. Save to Redis (Cache for 1 Hour)
+      await redisClient.setEx(cacheKey, 3600, JSON.stringify(sensors));
+    } catch (error) {
+      console.warn('[Redis] Cache write failed for sensors', error);
+    }
+
+    return sensors;
   }
 
   /**

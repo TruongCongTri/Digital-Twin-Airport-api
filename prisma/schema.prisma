@@ -68,6 +68,12 @@ enum FlightStatus {
   CANCELLED
 }
 
+enum FlightDirection {
+  INBOUND
+  OUTBOUND
+  TURNAROUND
+}
+
 /* ---------------------------------------------------------
    1. CORE: ZONES & INFRASTRUCTURE
 --------------------------------------------------------- */
@@ -209,6 +215,8 @@ model Flight {
 
   imageUrl        String?
   logoUrl         String?
+
+  direction      FlightDirection @default(TURNAROUND)
 
   @@index([status])
   @@map("flights")

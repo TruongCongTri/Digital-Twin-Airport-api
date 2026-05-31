@@ -25,6 +25,8 @@ export class ZoneRoute {
   }
 
   private initializeRoutes() {
+    this.router.get(ENDPOINTS.ZONE.STATIC, this.zoneController.getStaticZones);
+
     // [POST] Create a new Zone
     this.router.post(
       ENDPOINTS.ZONE.GET_ALL,

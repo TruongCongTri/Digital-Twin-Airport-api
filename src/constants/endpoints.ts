@@ -43,6 +43,7 @@ export const ENDPOINTS = {
     DETAIL: '/:id',
     HISTORY: '/:id/history', // Fetch historical time-series data for line charts
     GLOBAL_HISTORY: '/logs/all',
+    STATIC: '/static',
   },
 
   /* --- Crowd Management (AI Camera Mock) --- */
@@ -61,6 +62,7 @@ export const ENDPOINTS = {
     TELEMETRY: '/:id/telemetry', // Specific flight coordinate history
     ALLOCATION: '/:id/allocation', // Get/Update assigned parking stand or gate
     STATUS: '/:id/status', // Update flight status (e.g., ARRIVED, DEPARTED)
+    STATIC: '/static',
   },
 
   /* --- Zone Management --- */
@@ -68,7 +70,8 @@ export const ENDPOINTS = {
     BASE: '/zones',
     GET_ALL: '/',
     DETAIL: '/:id',
-    ANALYTICS: '/:id/analytics', // AI-generated crowd density & bottleneck predictions
+    ANALYTICS: '/:id/analytics', // AI-generated crowd density & bottleneck predictions\
+    STATIC: '/static',
   },
 
   /* --- Simulation & Demo Engine --- */
@@ -76,6 +79,8 @@ export const ENDPOINTS = {
     BASE: '/simulation',
     START: '/start', // Start general mock data generation
     STOP: '/stop',
+    REBOOT: '/reboot',
     SCENARIO: '/scenario', // Trigger specific Demo Killer Features (e.g., TIRE_OVERHEAT)
+    STATUS: '/status',
   },
 } as const;

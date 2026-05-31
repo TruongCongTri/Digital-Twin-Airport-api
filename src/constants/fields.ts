@@ -12,6 +12,7 @@ export const FIELDS = {
   ID: 'ID',
   SLUG: 'Slug',
   STATUS: 'Status',
+  DIRECTION: 'Direction',
   CREATED_AT: 'Created at',
   UPDATED_AT: 'Updated at',
   DELETED_AT: 'Deleted at',

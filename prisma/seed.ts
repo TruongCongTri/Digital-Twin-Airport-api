@@ -5,6 +5,7 @@
 import { ZoneType, SensorType, SensorStatus, FlightStatus } from '../src/generated/client';
 import { prisma } from '../src/common/configs/prisma';
 import { LONG_THANH_COORDS } from '../src/constants/airport-coordinates';
+import { SENSOR_COORDS } from '../src/constants/sensor-coordinates';
 
 async function main() {
   console.log('🌱 Starting Long Thanh Digital Twin database seed...');
@@ -15,36 +16,16 @@ async function main() {
   console.log('🚧 Building Terminal Infrastructure...');
 
   const t1CheckIn = await prisma.zone.create({
-    data: {
-      name: 'T1 - Domestic Check-in',
-      type: ZoneType.CHECK_IN,
-      floorLevel: 1,
-      maxCapacity: 2000,
-    },
+    data: { name: 'T1 - Domestic Check-in', type: ZoneType.CHECK_IN, floorLevel: 1, maxCapacity: 2000 },
   });
   const t1Security = await prisma.zone.create({
-    data: {
-      name: 'T1 - Main Security Screening',
-      type: ZoneType.SECURITY_GATE,
-      floorLevel: 1,
-      maxCapacity: 500,
-    },
+    data: { name: 'T1 - Main Security Screening', type: ZoneType.SECURITY_GATE, floorLevel: 1, maxCapacity: 500 },
   });
   const t2CheckIn = await prisma.zone.create({
-    data: {
-      name: 'T2 - International Check-in',
-      type: ZoneType.CHECK_IN,
-      floorLevel: 2,
-      maxCapacity: 2500,
-    },
+    data: { name: 'T2 - International Check-in', type: ZoneType.CHECK_IN, floorLevel: 2, maxCapacity: 2500 },
   });
   const t2Security = await prisma.zone.create({
-    data: {
-      name: 'T2 - Int Security Screening',
-      type: ZoneType.SECURITY_GATE,
-      floorLevel: 2,
-      maxCapacity: 600,
-    },
+    data: { name: 'T2 - Int Security Screening', type: ZoneType.SECURITY_GATE, floorLevel: 2, maxCapacity: 600 },
   });
   const apron = await prisma.zone.create({
     data: { name: 'Apron - Main Tarmac', type: ZoneType.APRON, floorLevel: 0, maxCapacity: 50 },
@@ -96,30 +77,26 @@ const AIRLINE_IMAGE_MAP: Record<string, string> = {
   const sensorTypes = Object.values(SensorType);
   const sensorsData: any[] = [];
 
-  const baseX = LONG_THANH_COORDS.CENTER.lng;
-  const baseY = LONG_THANH_COORDS.CENTER.lat;
-
-  // 10.750010815599236, 107.01369432683721
   sensorTypes.forEach((type) => {
     // Determine if this sensor type is strictly outdoor
     const isOutdoor = type === SensorType.WIND_OUTDOOR || type === SensorType.TARMAC_TEMP;
     const targetZones = isOutdoor ? outdoorZones : indoorZones;
 
+    const typeKey = type as keyof typeof SENSOR_COORDS;
+    const coordsArray = SENSOR_COORDS[typeKey] || [];
+
     for (let i = 1; i <= 5; i++) {
       // Distribute evenly among available valid zones for this type
       const zone = targetZones[i % targetZones.length];
-
-      // Calculate a slight offset so they don't stack perfectly on top of each other on the map
-      const offsetX = Math.random() * 0.005 - 0.0025;
-      const offsetY = Math.random() * 0.005 - 0.0025;
+      const coord = coordsArray[i] || { lat: LONG_THANH_COORDS.CENTER.lat, lng: LONG_THANH_COORDS.CENTER.lng };
 
       sensorsData.push({
-        name: `${zone.name.split(' ')[0]}-${type.replace('_', '-')}-${String(i).padStart(2, '0')}`,
+        name: `${zone.name.split(' ')[0]}-${type.replace('_', '-')}-${String(i + 1).padStart(2, '0')}`,
         type: type,
         status: SensorStatus.ACTIVE,
-        x: Number((baseX + offsetX).toFixed(5)),
-        y: Number((baseY + offsetY).toFixed(5)),
-        z: isOutdoor ? 0.0 : zone.floorLevel * 5.0, // Height based on floor level
+        x: coord.lng,
+        y: coord.lat,
+        z: isOutdoor ? 0.0 : zone.floorLevel * 5.0,
         zoneId: zone.id,
         imageUrl: SENSOR_IMAGE_MAP[type] || "https://images.unsplash.com/photo-1581092160562-40aa08e78837?w=600&q=80"
       });
@@ -195,25 +172,33 @@ const AIRLINE_IMAGE_MAP: Record<string, string> = {
 
   const flightsData: any[] = [];
 
-  for (let i = 1; i <= 20; i++) {
+  for (let i = 0; i < 20; i++) {
     const airline = airlines[i % airlines.length];
     const origin = cities[i % cities.length];
-    const destination = 'SGN'; // Long Thanh
+    const destination = 'SGN'; 
 
     let status: FlightStatus;
-    let parkingStandId = null;
+    let direction: 'INBOUND' | 'OUTBOUND' | 'TURNAROUND';
+    
+    // ✅ BULLETPROOF ASSIGNMENT: Every plane gets exactly 1 of the 15 stands.
+    // i goes from 0 to 19. i % 15 guarantees a safe index between 0 and 14.
+    const assignedStand = stands[i % 15];
 
-    // Distribute statuses across the stands using the round-robin array
-    if (i <= 5) {
-      status = FlightStatus.PARKED;
-      parkingStandId = stands[roundRobinStands[i - 1]].id; // Spreads across T1, T2, T3 evenly
-    } else if (i <= 10) {
-      status = FlightStatus.PUSHBACK;
-      parkingStandId = stands[roundRobinStands[i - 1]].id; // Spreads across T1, T2, T3 evenly
-    } else if (i <= 15) {
-      status = FlightStatus.APPROACHING;
+    if (i === 0) {
+      status = FlightStatus.LANDED;      
+      direction = 'INBOUND';
+    } else if (i === 1) {
+      status = FlightStatus.PUSHBACK;    
+      direction = 'OUTBOUND';
+    } else if (i <= 7) {
+      status = FlightStatus.PARKED;      
+      direction = 'TURNAROUND';
+    } else if (i <= 11) {
+      status = FlightStatus.APPROACHING; 
+      direction = 'INBOUND';
     } else {
-      status = FlightStatus.SCHEDULED;
+      status = FlightStatus.SCHEDULED;   
+      direction = 'INBOUND';
     }
 
     flightsData.push({
@@ -222,7 +207,8 @@ const AIRLINE_IMAGE_MAP: Record<string, string> = {
       origin: origin,
       destination: destination,
       status: status,
-      parkingStandId: parkingStandId,
+      direction: direction,
+      parkingStandId: assignedStand.id, // Guarantee this is never null
       imageUrl: PLANE_IMAGE_MAP[airline.code] || "https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=600&q=80",
       logoUrl: AIRLINE_IMAGE_MAP[airline.code] || "https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=600&q=80"
     });
