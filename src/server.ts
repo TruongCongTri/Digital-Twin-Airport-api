@@ -25,9 +25,11 @@ const checkDatabaseConnection = async () => {
 
 const startServer = async () => {
   try {
-    // 1. Check Database
+    console.log('[System]: Starting DB check...');
     await checkDatabaseConnection();
+    console.log('[System]: DB check passed.');
 
+    console.log('[System]: Connecting Redis...');
     // 2. Setup Redis for Pub/Sub and Cache
     const pubClient = createClient({ url: env.REDIS_URL });
     const subClient = pubClient.duplicate();
@@ -57,8 +59,8 @@ const startServer = async () => {
     // 4. Attach Socket.IO to the native HTTP server
     socketConfig.init(io);
 
-    const port = parseInt(env.PORT, 10);
-    const serverInstance = httpServer.listen(port, () => {
+    const port = parseInt(env.PORT || '10000', 10);
+    const serverInstance = httpServer.listen(port, '0.0.0.0', () => {
       console.log(`=================================`);
       console.log(`API Server is running at: http://localhost:${port}`);
       console.log(`Accepting connections from: ${env.CLIENT_URL}`);
