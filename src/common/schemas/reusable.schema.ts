@@ -65,12 +65,10 @@ export const getProductsQuerySchema = z.object({
  * @description Validates a resource slug passed in request parameters using SLUG_REGEX.
  */
 export const getSlugSchema = z.object({
-  params: z.object({
-    slug: z
-      .string({ message: MESSAGES.VALIDATION.REQUIRED(FIELDS.SLUG) })
-      .trim()
-      .regex(SLUG_REGEX, { message: MESSAGES.VALIDATION.INVALID_FORMAT(FIELDS.SLUG) }),
-  }),
+  slug: z
+    .string({ message: MESSAGES.VALIDATION.REQUIRED(FIELDS.SLUG) })
+    .trim()
+    .regex(SLUG_REGEX, { message: MESSAGES.VALIDATION.INVALID_FORMAT(FIELDS.SLUG) }),
 });
 
 /**
@@ -78,10 +76,8 @@ export const getSlugSchema = z.object({
  * @description Validates a single UUID identifier passed in request parameters.
  */
 export const getIDSchema = z.object({
-  params: z.object({
-    id: z
-      .string({ message: MESSAGES.VALIDATION.REQUIRED(FIELDS.ID) })
-      .trim()
-      .uuid({ message: MESSAGES.VALIDATION.INVALID_FORMAT(FIELDS.ID) }),
-  }),
+  id: z
+    .string({ message: MESSAGES.VALIDATION.REQUIRED(FIELDS.ID) })
+    .trim()
+    .uuid({ message: MESSAGES.VALIDATION.INVALID_FORMAT(FIELDS.ID) }),
 });
