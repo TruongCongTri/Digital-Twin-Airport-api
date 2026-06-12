@@ -27,6 +27,13 @@ export class GroundVehicleService {
     return { data, meta };
   }
 
+  // ✅ New Detail Service Method
+  public async getVehicleDetail(id: string) {
+    const vehicle = await this.vehicleRepository.getVehicleDetail(id);
+    if (!vehicle) throw new AppError(404, 'Ground Vehicle not found');
+    return vehicle;
+  }
+
   public async updateStatus(id: string, data: UpdateVehicleStatusDTO) {
     const vehicle = await this.vehicleRepository.findById(id);
     if (!vehicle) throw new AppError(404, 'Ground Vehicle not found');
@@ -43,16 +50,12 @@ export class GroundVehicleService {
     const vehicle = await this.vehicleRepository.findById(id);
     if (!vehicle) throw new AppError(404, 'Ground Vehicle not found');
 
-    if (vehicle.status === 'MAINTENANCE' || vehicle.status === 'OFFLINE') {
-      throw new AppError(400, `Cannot accept telemetry for a vehicle in ${vehicle.status} state.`);
-    }
-
     const telemetry = await this.vehicleRepository.addTelemetry(id, data);
 
     // Broadcast live GPS data to the ArcGIS 3D Map
     socketConfig.getIO().emit('vehicle:telemetry', {
       vehicleId: id,
-      callsign: vehicle.callsign,
+      licensePlate: vehicle.licensePlate, // Broadcast the new identifier
       type: vehicle.type,
       ...data,
       timestamp: telemetry.timestamp,

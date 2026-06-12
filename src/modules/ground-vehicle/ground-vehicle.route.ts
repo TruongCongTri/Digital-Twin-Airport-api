@@ -23,6 +23,8 @@ export class GroundVehicleRoute {
     this.router.post('/', validate(createVehicleSchema), this.controller.create);
     this.router.get('/', validate(getVehiclesQuerySchema), this.controller.getAll);
 
+    this.router.get('/:id', validate(getIDSchema), this.controller.getVehicleById);
+
     this.router.patch(
       '/:id/status',
       validate(getIDSchema),
@@ -36,6 +38,7 @@ export class GroundVehicleRoute {
       validate(addVehicleTelemetrySchema),
       this.controller.addTelemetry
     );
+
     this.router.get('/:id/telemetry', validate(getIDSchema), this.controller.getTelemetryHistory);
   }
 }

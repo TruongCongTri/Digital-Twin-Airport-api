@@ -63,6 +63,16 @@ const AIRLINE_IMAGE_MAP: Record<string, string> = {
   'NH': "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8d/All_Nippon_Airways_Logo.svg/250px-All_Nippon_Airways_Logo.svg.png"
 };
 
+// Civilian Vehicle Mocks
+const VEHICLE_MOCKS = [
+  { companyName: 'Xanh SM', brand: 'VinFast', carModel: 'VF8', type: VehicleType.TAXI, logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f2/Xanh_SM_logo.svg/512px-Xanh_SM_logo.svg.png' },
+  { companyName: 'Grab', brand: 'Toyota', carModel: 'Vios', type: VehicleType.RIDE_HAIL, logoUrl: 'https://upload.wikimedia.org/wikipedia/en/thumb/1/12/Grab_%28application%29_logo.svg/256px-Grab_%28application%29_logo.svg.png' },
+  { companyName: 'Vinasun', brand: 'Toyota', carModel: 'Innova', type: VehicleType.TAXI, logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/4/41/Vinasun_logo.png' },
+  { companyName: 'Mai Linh', brand: 'Toyota', carModel: 'Vios', type: VehicleType.TAXI, logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f1/Mai_Linh_Group_logo.svg/256px-Mai_Linh_Group_logo.svg.png' },
+  { companyName: null, brand: 'Honda', carModel: 'Tucson', type: VehicleType.PERSONAL_CAR, logoUrl: null },
+  { companyName: 'Be', brand: 'Kia', carModel: 'Morning', type: VehicleType.RIDE_HAIL, logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/Be_Group_logo.svg/256px-Be_Group_logo.svg.png' },
+];
+
 const INDOOR_SENSOR_TYPES = [SensorType.CO2, SensorType.TEMPERATURE, SensorType.HUMIDITY, SensorType.WIND_INDOOR, SensorType.LIGHT_DENSITY, SensorType.CAMERA_AI_CROWD];
 const OUTDOOR_SENSOR_TYPES = [SensorType.WIND_OUTDOOR, SensorType.TARMAC_TEMP, SensorType.TILT_STRUCTURAL];
 
@@ -189,7 +199,7 @@ async function seedTanSonNhat() {
   }
 
   for (let i = 0; i < 7; i++) {
-    const airline = AIRLINES[(i + 3) % AIRLINES.length]; // Offset so we get different airlines
+    const airline = AIRLINES[(i + 3) % AIRLINES.length];
     flightsData.push({
       flightNumber: `${airline.code}${400 + i}`,
       airline: airline.name,
@@ -205,49 +215,44 @@ async function seedTanSonNhat() {
 
   await prisma.flight.createMany({ data: flightsData });
 
-  // 5. GROUND VEHICLES (Taxis / Baggage Tugs / Buses)
-  console.log('🚜 Deploying Ground Support Equipment...');
+  // 5. GROUND VEHICLES (Civilian Traffic - Taxis & Cars)
+  console.log('🚗 Deploying Civilian Ground Traffic...');
   
   const intlTaxiPath = TAN_SON_NHAT_COORDS.ROUTES.INTERNATIONAL.taxiPath;
   const domTaxiPath = TAN_SON_NHAT_COORDS.ROUTES.DOMESTIC.taxiPath;
 
-  for (let i = 0; i < 3; i++) {
-    // International Tugs
-    const intlVehicle = await prisma.groundVehicle.create({
+  for (let i = 0; i < 6; i++) {
+    const mockInfo = VEHICLE_MOCKS[i % VEHICLE_MOCKS.length];
+    
+    // Distribute cars between Domestic and International terminals
+    const path = i % 2 === 0 ? intlTaxiPath : domTaxiPath;
+
+    if (!path || path.length === 0) continue;
+
+    const vehicle = await prisma.groundVehicle.create({
       data: {
-        callsign: `SGN-INTL-TUG-0${i + 1}`,
-        type: VehicleType.BAGGAGE_TUG,
-        status: VehicleStatus.DISPATCHED,
+        licensePlate: `51F-${10000 + (i * 123)}`,
+        type: mockInfo.type,
+        status: VehicleStatus.APPROACHING_DROP_OFF,
+        brand: mockInfo.brand,
+        carModel: mockInfo.carModel,
+        companyName: mockInfo.companyName,
+        logoUrl: mockInfo.logoUrl,
         airportId: airport.id,
-      }
-    });
-    // Drop them physically on the taxiway
-    await prisma.vehicleTelemetry.create({
-      data: {
-        vehicleId: intlVehicle.id,
-        longitude: intlTaxiPath[i * 2].lng, // Stagger them along the path
-        latitude: intlTaxiPath[i * 2].lat,
-        speed: 15,
-        batteryLevel: 85
       }
     });
 
-    // Domestic Passenger Buses
-    const domVehicle = await prisma.groundVehicle.create({
-      data: {
-        callsign: `SGN-DOM-BUS-0${i + 1}`,
-        type: VehicleType.PASSENGER_BUS,
-        status: VehicleStatus.DISPATCHED,
-        airportId: airport.id,
-      }
-    });
+    // Stagger their initial positions along the drop-off route
+    const startPoint = path[Math.min(i, path.length - 1)];
+
     await prisma.vehicleTelemetry.create({
       data: {
-        vehicleId: domVehicle.id,
-        longitude: domTaxiPath[i * 2].lng,
-        latitude: domTaxiPath[i * 2].lat,
-        speed: 20,
-        batteryLevel: 90
+        vehicleId: vehicle.id,
+        longitude: startPoint.lng,
+        latitude: startPoint.lat,
+        speed: 15,
+        heading: 0, // Will be calculated immediately by the simulation engine
+        batteryLevel: mockInfo.companyName === 'Xanh SM' ? 85 : null
       }
     });
   }
@@ -269,7 +274,7 @@ async function seedLongThanh() {
   const t1CheckIn = await prisma.zone.create({ data: { name: 'T1 Check-in', type: ZoneType.CHECK_IN, floorLevel: 1, airportId: airport.id }});
   const apron = await prisma.zone.create({ data: { name: 'LTN Apron', type: ZoneType.APRON, floorLevel: 0, airportId: airport.id }});
 
-  // Parking Stands (Using the unified nested "parking" constant)
+  // Parking Stands
   const stands = [];
   const terminals = [
     LONG_THANH_COORDS.TERMINALS.T1_RIGHT,
@@ -325,6 +330,35 @@ async function seedLongThanh() {
     });
   }
   await prisma.flight.createMany({ data: flightsData });
+
+  // Ground Vehicles
+  const ltnTaxiPath = (LONG_THANH_COORDS.ROUTES.T1.taxiPath as { lat: number; lng: number }[]) || [];
+  if (ltnTaxiPath.length > 0) {
+    for (let i = 0; i < 4; i++) {
+      const mockInfo = VEHICLE_MOCKS[i % VEHICLE_MOCKS.length];
+      const vehicle = await prisma.groundVehicle.create({
+        data: {
+          licensePlate: `60A-${20000 + (i * 123)}`, // Dong Nai province plate for authenticity
+          type: mockInfo.type,
+          status: VehicleStatus.APPROACHING_DROP_OFF,
+          brand: mockInfo.brand,
+          carModel: mockInfo.carModel,
+          companyName: mockInfo.companyName,
+          logoUrl: mockInfo.logoUrl,
+          airportId: airport.id,
+        }
+      });
+      await prisma.vehicleTelemetry.create({
+        data: {
+          vehicleId: vehicle.id,
+          longitude: ltnTaxiPath[0].lng,
+          latitude: ltnTaxiPath[0].lat,
+          speed: 15,
+          heading: 0,
+        }
+      });
+    }
+  }
 }
 
 async function main() {

@@ -29,22 +29,34 @@ export const LONG_THANH_COORDS = {
     },
   },
 
-  // 3. Runway Extremes
+  // 3. Runway Extremes & Areas
   RUNWAYS: {
-    TAKEOFF: {
-      start: { lat: 10.772270944354036, lng: 107.02804809945589 },
-      end: { lat: 10.793577939075295, lng: 107.05662782851412 },
+    RWY_25L_07R: {
+      start: { lat: 10.823710041593795, lng: 106.66951193619475 },
+      end: { lat: 10.813930798546425, lng: 106.64368852426568 },
+      area: [
+        { lat: 10.823400428109272, lng: 106.66964385536427 },
+        { lat: 10.823912510565854, lng: 106.66944490395991 },
+        { lat: 10.814047696505979, lng: 106.64332089250544 },
+        { lat: 10.81366318323904, lng: 106.6434657051963 },
+      ],
     },
-    LANDING: {
-      start: { lat: 10.795031773100453, lng: 107.05555608869702 },
-      end: { lat: 10.774176101877813, lng: 107.026517043176 },
+    RWY_25R_07L: {
+      start: { lat: 10.82484820416058, lng: 106.66313686190618 },
+      end: { lat: 10.815030986427335, lng: 106.63710841832535 },
+      area: [
+        { lat: 10.824660250230387, lng: 106.66324061492145 },
+        { lat: 10.825058134114984, lng: 106.66307315556871 },
+        { lat: 10.815219665467167, lng: 106.63704357564868 },
+        { lat: 10.81483461780666, lng: 106.63718689965292 },
+      ],
     },
   },
 
   // 4. Ground Taxiways & Flight Paths
   ROUTES: {
     T1: {
-      taxiPath: [], // Long Thanh currently has no active ground vehicle tracking paths
+      taxiPath: [] as { lat: number; lng: number }[],
       flightOutbound: [
         { lat: 10.776663608825748, lng: 107.0435422839063 },
         { lat: 10.78377963217384, lng: 107.04304509077257 },
@@ -58,7 +70,7 @@ export const LONG_THANH_COORDS = {
       ],
     },
     T2: {
-      taxiPath: [],
+      taxiPath: [] as { lat: number; lng: number }[],
       flightOutbound: [
         { lat: 10.77658820469574, lng: 107.03928748524474 },
         { lat: 10.78012949593461, lng: 107.03810731335507 },
@@ -72,7 +84,7 @@ export const LONG_THANH_COORDS = {
       ],
     },
     T3: {
-      taxiPath: [],
+      taxiPath: [] as { lat: number; lng: number }[],
       flightOutbound: [
         { lat: 10.772730679301556, lng: 107.03647653019297 },
         { lat: 10.775449923632099, lng: 107.03218499604867 },

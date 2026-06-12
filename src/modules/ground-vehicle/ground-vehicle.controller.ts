@@ -27,6 +27,13 @@ export class GroundVehicleController {
     successResponse(res, { statusCode: 200, message: 'Vehicles fetched', data, meta });
   };
 
+  // ✅ New Controller Method
+  public getVehicleById = async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const data = await this.vehicleService.getVehicleDetail(id);
+    successResponse(res, { statusCode: 200, message: 'Vehicle details fetched', data });
+  };
+
   public updateStatus = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const payload = req.body as UpdateVehicleStatusDTO;

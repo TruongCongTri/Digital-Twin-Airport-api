@@ -74,6 +74,18 @@ export const ENDPOINTS = {
     STATIC: '/static',
   },
 
+  //
+  GH: {
+    BASE: '/ground-vehicles',
+    GET_ALL: '/',
+    ACTIVE: '/active',
+    DETAIL: '/:id',
+    TELEMETRY: '/:id/telemetry',
+    ALLOCATION: '/:id/allocation',
+    STATUS: '/:id/status',
+    STATIC: '/static',
+  },
+
   /* --- Simulation & Demo Engine --- */
   SIMULATION: {
     BASE: '/simulation',

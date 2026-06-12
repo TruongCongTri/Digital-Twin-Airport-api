@@ -77,19 +77,19 @@ enum FlightDirection {
 }
 
 enum VehicleType {
-  BAGGAGE_TUG
-  FUEL_TRUCK
-  PASSENGER_BUS
-  CATERING_TRUCK
-  FOLLOW_ME_CAR
+  PERSONAL_CAR
+  TAXI
+  RIDE_HAIL     /// e.g., Grab, Gojek, Be
+  VIP_TRANSFER  /// Limousines, shuttles
 }
 
 enum VehicleStatus {
-  IDLE
-  DISPATCHED
-  CHARGING
-  MAINTENANCE
-  OFFLINE
+  APPROACHING_DROP_OFF
+  DROPPING_OFF
+  PARKED
+  APPROACHING_PICK_UP
+  PICKING_UP
+  EXITING
 }
 
 /* ---------------------------------------------------------
@@ -314,9 +314,16 @@ model Session {
 --------------------------------------------------------- */
 model GroundVehicle {
   id              String          @id @default(uuid())
-  callsign        String          @unique /// e.g., "TUG-04", "FUEL-12"
+  licensePlate    String          @unique /// e.g., "51F-123.45"
   type            VehicleType
-  status          VehicleStatus   @default(IDLE)
+  status          VehicleStatus   @default(APPROACHING_DROP_OFF)
+  
+  brand           String?         /// e.g., "Toyota", "VinFast"
+  carModel        String?         /// e.g., "Vios", "VF8"
+  companyName     String?         /// e.g., "Vinasun", "Mai Linh", "Xanh SM"
+  
+  imageUrl        String?
+  logoUrl         String?
   
   // Multi-tenancy isolation
   airportId       String
@@ -339,7 +346,8 @@ model VehicleTelemetry {
   longitude       Float
   latitude        Float
   speed           Float
-  batteryLevel    Float?          /// Useful for EV GSE fleets
+  heading         Float           /// ✅ Required for accurate 3D rotation in ArcGIS
+  batteryLevel    Float?          /// Useful for EV Taxi fleets (e.g., VinFast/GSM)
 
   timestamp       DateTime        @default(now())
 

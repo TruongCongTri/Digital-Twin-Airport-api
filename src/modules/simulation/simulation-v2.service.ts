@@ -1,7 +1,7 @@
 /**
  * @file simulation.service.ts
  * @description Master Simulation Engine.
- * Handles AI predictive generation, flight kinematics, ground vehicle patrolling,
+ * Handles AI predictive generation, flight kinematics, civilian ground traffic,
  * and environmental scenario injection across all active multi-tenant airports.
  */
 import { prisma } from '@/common/configs/prisma';
@@ -42,7 +42,7 @@ interface FlightSimState {
 
 interface VehicleSimState {
   id: string;
-  callsign: string;
+  licensePlate: string;
   status: VehicleStatus;
   lat: number;
   lng: number;
@@ -51,7 +51,7 @@ interface VehicleSimState {
   route: { lat: number; lng: number }[];
   currentWaypointIndex: number;
   airportCode: string;
-  isReversing: boolean; // Used to make vehicles patrol back and forth
+  ticksInState: number;
 }
 
 export class SimulationService {
@@ -205,37 +205,44 @@ export class SimulationService {
       });
     });
 
-    // 3. BOOT GROUND VEHICLES
+    // 3. BOOT GROUND VEHICLES (CIVILIAN TRAFFIC)
     const groundVehicles = await prisma.groundVehicle.findMany({
-      where: { status: 'DISPATCHED' },
-      include: { airport: true, telemetry: { take: 1, orderBy: { timestamp: 'desc' } } },
+      // ✅ Removed the invalid { status: { not: 'OFFLINE' } } where clause
+      include: {
+        airport: true,
+        telemetry: { take: 1, orderBy: { timestamp: 'desc' } },
+      },
     });
 
-    groundVehicles.forEach((v) => {
+    groundVehicles.forEach((v: any) => {
       const airportCode = v.airport.code;
-      // Simple heuristic: Assign path based on callsign naming (e.g. SGN-INTL-TUG)
-      const terminalKey = this.getTerminalRouteKey(airportCode, v.callsign);
+      // We assume civilian cars use the standard taxi paths defined for terminals
+      const terminalKey = airportCode === 'VVTS' ? 'DOMESTIC' : 'T1';
       const routes = this.getAirportRoutes(airportCode) as any;
-      const taxiPath = routes[terminalKey]?.taxiPath || [];
+      const taxiPath = (routes[terminalKey]?.taxiPath as { lat: number; lng: number }[]) || [];
 
-      if (taxiPath.length === 0) return;
+      // ✅ FIX: Explicitly grab the first item and type-check it for TypeScript
+      const firstWaypoint = taxiPath[0];
+      if (!firstWaypoint) return;
 
-      const lastTelemetry = v.telemetry[0];
-      const startLat = lastTelemetry?.latitude ?? taxiPath[0].lat;
-      const startLng = lastTelemetry?.longitude ?? taxiPath[0].lng;
+      const lastTelemetry = v.telemetry && v.telemetry.length > 0 ? v.telemetry[0] : null;
+
+      // ✅ Now TypeScript knows firstWaypoint is safely defined!
+      const startLat = lastTelemetry?.latitude ?? firstWaypoint.lat;
+      const startLng = lastTelemetry?.longitude ?? firstWaypoint.lng;
 
       this.vehicleStates.set(v.id, {
         id: v.id,
-        callsign: v.callsign,
+        licensePlate: v.licensePlate,
         status: v.status as VehicleStatus,
         lat: startLat,
         lng: startLng,
-        speed: lastTelemetry?.speed ?? 15,
-        heading: 0,
+        speed: lastTelemetry?.speed ?? 20,
+        heading: lastTelemetry?.heading ?? 0,
         route: taxiPath,
         currentWaypointIndex: 1,
         airportCode,
-        isReversing: false,
+        ticksInState: 0,
       });
     });
 
@@ -354,11 +361,12 @@ export class SimulationService {
       const vehicleLogsToInsert: any[] = [];
 
       for (const vehicle of this.vehicleStates.values()) {
+        vehicle.ticksInState++;
         this.calculateNextVehiclePosition(vehicle);
 
         vehicleTelemetryBatch.push({
-          vehicleId: vehicle.id,
-          callsign: vehicle.callsign,
+          id: vehicle.id,
+          sts: vehicle.status,
           lat: Number(vehicle.lat.toFixed(6)),
           lng: Number(vehicle.lng.toFixed(6)),
           spd: Number(vehicle.speed.toFixed(1)),
@@ -371,6 +379,7 @@ export class SimulationService {
             latitude: vehicle.lat,
             longitude: vehicle.lng,
             speed: vehicle.speed,
+            heading: vehicle.heading,
             timestamp: this.currentVirtualDate,
           });
         }
@@ -433,7 +442,6 @@ export class SimulationService {
         if (freeStands.length > 0) {
           const newStand = freeStands[Math.floor(Math.random() * freeStands.length)];
 
-          // ✅ FIX: Add an explicit guard to satisfy TypeScript's strict null checks
           if (!newStand) return;
 
           const terminalKey = this.getTerminalRouteKey(recycledFlight.airport.code, newStand.code);
@@ -607,9 +615,26 @@ export class SimulationService {
     }
   }
 
-  // ✅ New Ground Vehicle Interpolation Logic (Patrols back and forth)
+  // ✅ Civilian Vehicle Lifecycle Logic (with TS fix)
   private calculateNextVehiclePosition(vehicle: VehicleSimState) {
-    if (vehicle.speed === 0 || !vehicle.route || vehicle.route.length === 0) return;
+    if (!vehicle.route || vehicle.route.length === 0) return;
+
+    // Simulate Drop-off / Pick-up delays
+    if (vehicle.status === 'DROPPING_OFF' || vehicle.status === 'PICKING_UP') {
+      if (vehicle.ticksInState > 10) {
+        vehicle.status = vehicle.status === 'DROPPING_OFF' ? 'EXITING' : 'APPROACHING_DROP_OFF';
+        vehicle.speed = 20; // Resume driving
+        vehicle.ticksInState = 0;
+
+        // Broadcast state change to database (fire & forget)
+        prisma.groundVehicle
+          .update({ where: { id: vehicle.id }, data: { status: vehicle.status } })
+          .catch(console.error);
+      }
+      return;
+    }
+
+    if (vehicle.status === 'PARKED') return; // Do nothing if parked
 
     const target = vehicle.route[vehicle.currentWaypointIndex];
     if (!target) return;
@@ -623,22 +648,34 @@ export class SimulationService {
 
     const distToTarget = Math.abs(vehicle.lat - target.lat) + Math.abs(vehicle.lng - target.lng);
 
+    // Reached Waypoint
     if (distToTarget <= distancePerTick * 1.5) {
       vehicle.lat = target.lat;
       vehicle.lng = target.lng;
+      vehicle.currentWaypointIndex++;
 
-      // Ping-pong patrol logic
-      if (vehicle.isReversing) {
-        vehicle.currentWaypointIndex--;
-        if (vehicle.currentWaypointIndex < 0) {
-          vehicle.isReversing = false;
+      // Terminal logic (middle of route)
+      if (vehicle.currentWaypointIndex === Math.floor(vehicle.route.length / 2)) {
+        vehicle.status = vehicle.status === 'APPROACHING_DROP_OFF' ? 'DROPPING_OFF' : 'PICKING_UP';
+        vehicle.speed = 0;
+        vehicle.ticksInState = 0;
+        prisma.groundVehicle
+          .update({ where: { id: vehicle.id }, data: { status: vehicle.status } })
+          .catch(console.error);
+      }
+
+      // Reached End of Route
+      if (vehicle.currentWaypointIndex >= vehicle.route.length) {
+        // ✅ FIX: Use strict null check for the starting waypoint array index
+        const startPoint = vehicle.route[0];
+        if (startPoint) {
           vehicle.currentWaypointIndex = 1;
-        }
-      } else {
-        vehicle.currentWaypointIndex++;
-        if (vehicle.currentWaypointIndex >= vehicle.route.length) {
-          vehicle.isReversing = true;
-          vehicle.currentWaypointIndex = vehicle.route.length - 2;
+          vehicle.lat = startPoint.lat;
+          vehicle.lng = startPoint.lng;
+          vehicle.status = 'APPROACHING_DROP_OFF';
+          prisma.groundVehicle
+            .update({ where: { id: vehicle.id }, data: { status: vehicle.status } })
+            .catch(console.error);
         }
       }
     }

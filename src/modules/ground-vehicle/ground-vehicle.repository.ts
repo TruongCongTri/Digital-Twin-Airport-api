@@ -15,9 +15,14 @@ export class GroundVehicleRepository extends BaseRepository<GroundVehicle> {
   public async create(data: CreateVehicleDTO) {
     return await prisma.groundVehicle.create({
       data: {
-        callsign: data.callsign,
+        licensePlate: data.licensePlate,
         type: data.type as VehicleType,
-        status: (data.status as VehicleStatus) || 'IDLE',
+        status: (data.status as VehicleStatus) || 'APPROACHING_DROP_OFF',
+        brand: data.brand ?? null,
+        carModel: data.carModel ?? null,
+        companyName: data.companyName ?? null,
+        imageUrl: data.imageUrl ?? null,
+        logoUrl: data.logoUrl ?? null,
         airportId: data.airportId,
       },
     });
@@ -37,7 +42,23 @@ export class GroundVehicleRepository extends BaseRepository<GroundVehicle> {
       where,
       skip: (query.page - 1) * query.limit,
       take: query.limit,
-      orderBy: { callsign: 'asc' },
+      orderBy: { licensePlate: 'asc' }, // Changed from callsign
+    });
+  }
+
+  // ✅ New method to get full vehicle context + telemetry path
+  public async getVehicleDetail(id: string) {
+    return await prisma.groundVehicle.findUnique({
+      where: { id },
+      include: {
+        airport: {
+          select: { id: true, code: true, name: true },
+        },
+        telemetry: {
+          orderBy: { timestamp: 'desc' },
+          take: 50,
+        },
+      },
     });
   }
 
@@ -55,6 +76,7 @@ export class GroundVehicleRepository extends BaseRepository<GroundVehicle> {
         longitude: data.longitude,
         latitude: data.latitude,
         speed: data.speed,
+        heading: data.heading,
         ...(data.batteryLevel !== undefined && { batteryLevel: data.batteryLevel }),
       },
     });
