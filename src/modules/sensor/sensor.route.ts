@@ -5,6 +5,7 @@ import {
   createSensorSchema,
   getSensorHistoryQuerySchema,
   getSensorsQuerySchema,
+  getStaticSensorsQuerySchema,
   updateSensorSchema,
 } from './sensor.schema';
 import { ENDPOINTS } from '@/constants/endpoints';
@@ -45,7 +46,6 @@ export class SensorRoute {
     );
 
     // [GET] GET HISTORY FOR ALL SENSORS
-    // Note: Place this BEFORE the /:id routes to prevent Express from thinking "logs" is an ID
     this.router.get(
       ENDPOINTS.SENSOR.GLOBAL_HISTORY,
       validate(getSensorHistoryQuerySchema),
@@ -55,7 +55,12 @@ export class SensorRoute {
     // [GET] METADATA (Types & Statuses for UI)
     this.router.get(ENDPOINTS.SENSOR.TYPES, this.sensorController.getMetadata);
 
-    this.router.get(ENDPOINTS.SENSOR.STATIC, this.sensorController.getStaticSensors);
+    // [GET] STATIC SENSORS (For fast map initialization)
+    this.router.get(
+      ENDPOINTS.SENSOR.STATIC,
+      validate(getStaticSensorsQuerySchema),
+      this.sensorController.getStaticSensors
+    );
 
     // [GET] GET DETAILS OF Sensor BY ID
     this.router.get(
@@ -67,8 +72,8 @@ export class SensorRoute {
     // [GET] GET HISTORY FOR A SPECIFIC SENSOR
     this.router.get(
       ENDPOINTS.SENSOR.HISTORY,
-      validate(getIDSchema), // Validates the :id param
-      validate(getSensorHistoryQuerySchema), // Validates the ?page=1&startDate=... query
+      validate(getIDSchema),
+      validate(getSensorHistoryQuerySchema),
       this.sensorController.getHistoryForSensor
     );
 

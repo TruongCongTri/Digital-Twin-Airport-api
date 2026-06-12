@@ -28,8 +28,12 @@ export class SensorService {
     this.sensorLogRepository = new SensorLogRepository();
   }
 
-  public async getStaticSensors() {
-    const cacheKey = 'static:sensors:metadata';
+  /**
+   * @description Fetches static sensor data, isolated by airport ID.
+   */
+  public async getStaticSensors(airportId?: string) {
+    // Scope the cache key by airport to prevent cross-facility data leaks
+    const cacheKey = `static:sensors:metadata:${airportId || 'global'}`;
 
     try {
       // 1. Check Redis First
@@ -39,8 +43,8 @@ export class SensorService {
       console.warn('[Redis] Cache read failed for sensors, falling back to DB', error);
     }
 
-    // 2. Fallback to DB
-    const sensors = await this.sensorRepository.getStaticSensors();
+    // 2. Fallback to DB (Passes airportId to the Repository)
+    const sensors = await this.sensorRepository.getStaticSensors(airportId);
 
     try {
       // 3. Save to Redis (Cache for 1 Hour)
@@ -56,8 +60,6 @@ export class SensorService {
    * @description Create new Sensor
    */
   public async create(data: CreateSensorDTO) {
-    // Note: Foreign key validation (zoneId) is inherently handled by Prisma throwing a P2003 error,
-    // which the global error-handler maps to a 404 or 400 automatically.
     return await this.sensorRepository.create(data);
   }
 
@@ -66,9 +68,7 @@ export class SensorService {
    */
   public async getAll(query: GetSensorsQuery) {
     const { total, data } = await this.sensorRepository.findManyWithPagination(query);
-
     const meta = PaginationMetaDto.create(query.page, query.limit, total);
-
     return { data, meta };
   }
 
@@ -76,8 +76,10 @@ export class SensorService {
    * @description Get detail of Sensor by ID
    */
   public async getDetail(id: string) {
-    // Optionally include the Zone relation so the client knows exactly where it is
-    const result = await this.sensorRepository.findById(id, { include: { zone: true } });
+    // Optionally include the Zone and Airport relation so the client knows exactly where it is
+    const result = await this.sensorRepository.findById(id, {
+      include: { zone: true, airport: true },
+    });
 
     if (!result) {
       throw new AppError(
@@ -94,10 +96,7 @@ export class SensorService {
    * @description Update Sensor by ID
    */
   public async update(id: string, data: UpdateSensorDTO) {
-    // 1. Verify existence
     await this.getDetail(id);
-
-    // 2. Call Repository to update
     return await this.sensorRepository.updateById(id, data);
   }
 
@@ -105,10 +104,7 @@ export class SensorService {
    * @description Delete Sensor by ID
    */
   public async delete(id: string) {
-    // 1. Verify existence
     await this.getDetail(id);
-
-    // 2. Call Repository to delete
     return await this.sensorRepository.delete(id);
   }
 
@@ -116,10 +112,7 @@ export class SensorService {
    * @description Get history for ONE specific sensor
    */
   public async getHistoryForSensor(id: string, query: GetSensorHistoryQuery) {
-    // 1. Verify the sensor exists first
     await this.getDetail(id);
-
-    // 2. Fetch its logs
     const { total, data } = await this.sensorLogRepository.findHistory(query, id);
     const meta = PaginationMetaDto.create(query.page, query.limit, total);
 
@@ -127,7 +120,7 @@ export class SensorService {
   }
 
   /**
-   * @description Get global history for ALL sensors (Useful for AI aggregate training)
+   * @description Get global history for ALL sensors, safely scoped by query.airportId
    */
   public async getAllHistory(query: GetSensorHistoryQuery) {
     const { total, data } = await this.sensorLogRepository.findHistory(query);
@@ -136,9 +129,6 @@ export class SensorService {
     return { data, meta };
   }
 
-  /**
-   * @description Returns static metadata for frontend UI dropdowns
-   */
   public getMetadata() {
     return {
       types: SENSOR_TYPES,

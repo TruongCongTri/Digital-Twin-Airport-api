@@ -25,23 +25,23 @@ enum Role {
 enum SensorType {
   CO2
   TEMPERATURE
-  HUMIDITY        // Indoor environmental comfort
+  HUMIDITY
   WIND_INDOOR
   WIND_OUTDOOR
-  TILT_STRUCTURAL // Structural tilt/deformation monitoring
-  LIGHT_DENSITY   
+  TILT_STRUCTURAL
+  LIGHT_DENSITY  
   TARMAC_TEMP
-  CAMERA_AI_CROWD // Crowd flow tracking and AI prediction
+  CAMERA_AI_CROWD
 }
 
 enum SensorStatus {
   ACTIVE
-  WARNING       // Approaching safety thresholds (Yellow)
-  CRITICAL      // Breached safety thresholds (Red)
-  MAINTENANCE   // Hardware being physically repaired
-  CALIBRATING   // Online, but data should be ignored by AI
-  OFFLINE       // Intentionally powered down
-  UNREACHABLE   // Network failure / Missed heartbeat
+  WARNING      
+  CRITICAL     
+  MAINTENANCE  
+  CALIBRATING  
+  OFFLINE      
+  UNREACHABLE  
 }
 
 enum ZoneType {
@@ -53,7 +53,7 @@ enum ZoneType {
   BAGGAGE_CLAIM
   RUNWAY
   TAXIWAY
-  APRON         // Tarmac area where parking stands are located
+  APRON         
 }
 
 enum FlightStatus {
@@ -62,7 +62,7 @@ enum FlightStatus {
   APPROACHING
   LANDED
   TAXIING
-  PARKED        // Linked to ParkingStand
+  PARKED        
   BOARDING
   PUSHBACK
   DEPARTED
@@ -76,67 +76,103 @@ enum FlightDirection {
   TURNAROUND
 }
 
+enum VehicleType {
+  BAGGAGE_TUG
+  FUEL_TRUCK
+  PASSENGER_BUS
+  CATERING_TRUCK
+  FOLLOW_ME_CAR
+}
+
+enum VehicleStatus {
+  IDLE
+  DISPATCHED
+  CHARGING
+  MAINTENANCE
+  OFFLINE
+}
+
 /* ---------------------------------------------------------
-   1. CORE: ZONES & INFRASTRUCTURE
+   1. CORE: AIRPORTS, ZONES & INFRASTRUCTURE
 --------------------------------------------------------- */
 
-/// Represents a physical area or room inside/outside the airport
+/// Root tenant model for strict data isolation
+model Airport {
+  id        String   @id @default(uuid())
+  code      String   @unique /// e.g., "VVTS", "VVLT"
+  name      String
+  latitude  Float
+  longitude Float
+
+  zones     Zone[]
+  sensors   Sensor[]
+  flights   Flight[]
+
+  groundVehicles  GroundVehicle[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("airports")
+}
+
 model Zone {
   id              String         @id @default(uuid())
   name            String
   type            ZoneType
   floorLevel      Int            @default(1)
-  maxCapacity     Int?           /// Max allowed people/vehicles
+  maxCapacity     Int?           
 
-  // The ArcGIS Integration Bridge
-  gisItemId     String?  // e.g., "a1b2c3d4e5f6..." (The ArcGIS Portal Item ID)
-  gisSceneUrl   String?  // The direct REST endpoint to the 3D Scene Layer
+  // Multi-tenancy isolation
+  airportId       String
+  airport         Airport        @relation(fields: [airportId], references: [id], onDelete: Cascade)
 
-  currentDensity  Int            @default(0) /// Updated by Crowd Simulation Engine
+  // ArcGIS Integration
+  gisItemId       String?  
+  gisSceneUrl     String?  
+
+  currentDensity  Int            @default(0) 
   
-  // Relations
   sensors         Sensor[]
-  parkingStands   ParkingStand[] /// Gates or Tarmac parking spots located in this zone
+  parkingStands   ParkingStand[] 
   
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
+  @@index([airportId])
   @@map("zones")
 }
 
-/// Specific parking locations for aircraft on the Apron/Gates
 model ParkingStand {
-  id              String   @id @default(uuid())
-  code            String   @unique /// e.g., "Gate 12", "Stand V1"
+  id          String   @id @default(uuid())
+  code        String   
   
-  // 3D Spatial Coordinates for ArcGIS highlighting
-  x               Float
-  y               Float
-  z               Float
+  x           Float
+  y           Float
+  z           Float
   
-  isOccupied      Boolean  @default(false)
+  isOccupied  Boolean  @default(false)
   
-  // Relations
-  zoneId          String
-  zone            Zone     @relation(fields: [zoneId], references: [id], onDelete: Cascade)
-  flights         Flight[] /// History of flights that used this stand
+  zoneId      String
+  zone        Zone     @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  flights     Flight[] 
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
+  @@unique([code, zoneId]) /// Ensure gates are unique per zone/airport
   @@map("parking_stands")
 }
 
-/// Metadata for ArcGIS 3D Layers (Architecture, MEP, Structural)
 model BuildingLayer {
-  id              String   @id @default(uuid())
-  name            String
-  arcgisItemId    String   @unique
-  url             String
-  isVisible       Boolean  @default(true)
+  id            String   @id @default(uuid())
+  name          String
+  arcgisItemId  String   @unique
+  url           String
+  isVisible     Boolean  @default(true)
   
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@map("building_layers")
 }
@@ -145,50 +181,47 @@ model BuildingLayer {
    2. IOT HARDWARE & DATA
 --------------------------------------------------------- */
 
-/// Represents a physical IoT device mapped to X,Y,Z coordinates in ArcGIS
 model Sensor {
-  id              String       @id @default(uuid())
-  name            String
-  type            SensorType
-  status          SensorStatus @default(ACTIVE)
+  id            String       @id @default(uuid())
+  name          String
+  type          SensorType
+  status        SensorStatus @default(ACTIVE)
   
-  // 3D Spatial Coordinates for ArcGIS mapping
-  x               Float
-  y               Float
-  z               Float
+  x             Float
+  y             Float
+  z             Float
   
-  // FAST CACHE FOR DASHBOARD
-  currentValue    Float?       /// The latest live reading
-  lastReadAt      DateTime?    /// When the reading was taken
+  currentValue  Float?       
+  lastReadAt    DateTime?    
 
-  // Relations
-  zoneId          String
-  zone            Zone         @relation(fields: [zoneId], references: [id], onDelete: Cascade)
-  logs            SensorLog[]
+  // Multi-tenancy isolation
+  airportId     String
+  airport       Airport      @relation(fields: [airportId], references: [id], onDelete: Cascade)
+
+  zoneId        String
+  zone          Zone         @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  logs          SensorLog[]
   
-  // Link to a specific 3D feature
-  gisFeatureId  String?  // If a sensor is physically attached to a specific 3D wall or AC unit in the BIM model
+  gisFeatureId  String?  
 
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
-  imageUrl        String?
+  imageUrl      String?
 
-  @@index([zoneId])
-  @@index([type, status]) /// Optimized for "GET /sensors?type=CO2&status=ACTIVE"
+  @@index([airportId, type, status]) /// Optimized for specific airport dashboard queries
   @@map("sensors")
 }
 
-/// Time-series data for historical charts and AI prediction
 model SensorLog {
-  id              String   @id @default(uuid())
-  sensorId        String
-  sensor          Sensor   @relation(fields: [sensorId], references: [id], onDelete: Cascade)
+  id          String   @id @default(uuid())
+  sensorId    String
+  sensor      Sensor   @relation(fields: [sensorId], references: [id], onDelete: Cascade)
   
-  value           Float
-  timestamp       DateTime @default(now())
+  value       Float
+  timestamp   DateTime @default(now())
   
-  @@index([sensorId, timestamp(sort: Desc)]) /// Crucial for querying recent history quickly
+  @@index([sensorId, timestamp(sort: Desc)]) 
   @@map("sensor_logs")
 }
 
@@ -197,46 +230,48 @@ model SensorLog {
 --------------------------------------------------------- */
 
 model Flight {
-  id              String       @id @default(uuid())
-  flightNumber    String       @unique /// e.g., VN-123
+  id              String          @id @default(uuid())
+  flightNumber    String          @unique 
   airline         String
   origin          String
   destination     String
-  status          FlightStatus @default(SCHEDULED)
+  status          FlightStatus    @default(SCHEDULED)
   
-  assignedRunway String?       // The runway assigned by ATC based on wind (e.g., "RWY_05L")
+  assignedRunway  String?        
   
-  // Relations
-  parkingStandId  String?      // Assigned gate/stand when parked or taxiing
-  parkingStand    ParkingStand? @relation(fields: [parkingStandId], references: [id])
+  // Multi-tenancy isolation
+  airportId       String
+  airport         Airport         @relation(fields: [airportId], references: [id], onDelete: Cascade)
+
+  parkingStandId  String?      
+  parkingStand    ParkingStand?   @relation(fields: [parkingStandId], references: [id])
   
   telemetry       FlightTelemetry[]
 
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
 
   imageUrl        String?
   logoUrl         String?
 
-  direction      FlightDirection @default(TURNAROUND)
+  direction       FlightDirection @default(TURNAROUND)
 
-  @@index([status])
+  @@index([airportId, status])
   @@map("flights")
 }
 
-/// Live coordinates for rendering the dashed line path in ArcGIS
 model FlightTelemetry {
-  id              String   @id @default(uuid())
-  flightId        String
-  flight          Flight   @relation(fields: [flightId], references: [id], onDelete: Cascade)
+  id          String   @id @default(uuid())
+  flightId    String
+  flight      Flight   @relation(fields: [flightId], references: [id], onDelete: Cascade)
   
-  longitude       Float
-  latitude        Float
-  altitude        Float
-  heading         Float
-  speed           Float
+  longitude   Float
+  latitude    Float
+  altitude    Float
+  heading     Float
+  speed       Float
 
-  timestamp       DateTime @default(now())
+  timestamp   DateTime @default(now())
 
   @@index([flightId, timestamp(sort: Desc)])
   @@map("flight_telemetry")
@@ -247,16 +282,16 @@ model FlightTelemetry {
 --------------------------------------------------------- */
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
+  id        String    @id @default(uuid())
+  email     String    @unique
   password  String
   fullName  String
-  role      Role     @default(OPERATOR)
+  role      Role      @default(OPERATOR)
   
   sessions  Session[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   @@map("users")
 }
@@ -271,4 +306,43 @@ model Session {
   createdAt    DateTime @default(now())
 
   @@map("sessions")
+}
+
+
+/* ---------------------------------------------------------
+   5. Ground Vehicle
+--------------------------------------------------------- */
+model GroundVehicle {
+  id              String          @id @default(uuid())
+  callsign        String          @unique /// e.g., "TUG-04", "FUEL-12"
+  type            VehicleType
+  status          VehicleStatus   @default(IDLE)
+  
+  // Multi-tenancy isolation
+  airportId       String
+  airport         Airport         @relation(fields: [airportId], references: [id], onDelete: Cascade)
+
+  telemetry       VehicleTelemetry[]
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([airportId, type, status])
+  @@map("ground_vehicles")
+}
+
+model VehicleTelemetry {
+  id              String          @id @default(uuid())
+  vehicleId       String
+  vehicle         GroundVehicle   @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  
+  longitude       Float
+  latitude        Float
+  speed           Float
+  batteryLevel    Float?          /// Useful for EV GSE fleets
+
+  timestamp       DateTime        @default(now())
+
+  @@index([vehicleId, timestamp(sort: Desc)])
+  @@map("vehicle_telemetry")
 }

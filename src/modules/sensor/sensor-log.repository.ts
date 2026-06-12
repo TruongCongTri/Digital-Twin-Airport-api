@@ -1,4 +1,4 @@
-import { Prisma, SensorLog, SensorType } from '@/generated/client';
+import { Prisma, SensorLog, SensorType } from '@/generated/index';
 import { BaseRepository } from '@/common/repositories/base.repository';
 import { GetSensorHistoryQuery } from './sensor.schema';
 
@@ -13,7 +13,6 @@ export class SensorLogRepository extends BaseRepository<Prisma.SensorLogDelegate
    * If sensorId is null, fetches globally across ALL sensors (with optional type/zone filters).
    */
   public async findHistory(query: GetSensorHistoryQuery, sensorId?: string) {
-    // 1. Explicitly build the Where object to satisfy exactOptionalPropertyTypes
     const where: Prisma.SensorLogWhereInput = {};
 
     if (sensorId !== undefined) {
@@ -27,30 +26,36 @@ export class SensorLogRepository extends BaseRepository<Prisma.SensorLogDelegate
       };
     }
 
-    // 2. Build the nested Sensor relation filter safely
-    if (sensorId === undefined && (query.type !== undefined || query.zoneId !== undefined)) {
+    // Apply parent Sensor filters (e.g., fetching all logs for VVTS)
+    if (
+      sensorId === undefined &&
+      (query.type !== undefined || query.zoneId !== undefined || query.airportId !== undefined)
+    ) {
       const sensorFilter: Prisma.SensorWhereInput = {};
 
       if (query.type !== undefined) {
-        sensorFilter.type = query.type as SensorType; // Cast string to exact Prisma Enum
+        sensorFilter.type = query.type as SensorType;
       }
 
       if (query.zoneId !== undefined) {
         sensorFilter.zoneId = query.zoneId;
       }
 
+      if (query.airportId !== undefined) {
+        sensorFilter.OR = [{ airportId: query.airportId }, { airport: { code: query.airportId } }];
+      }
+
       where.sensor = sensorFilter;
     }
 
-    // 3. Execute query
     return await this.executePagination<SensorLog>({
       where,
       skip: (query.page - 1) * query.limit,
       take: query.limit,
-      orderBy: { timestamp: 'desc' }, // Newest logs first
+      orderBy: { timestamp: 'desc' },
       include: {
         sensor: {
-          select: { name: true, type: true, zoneId: true },
+          select: { name: true, type: true, zoneId: true, airportId: true },
         },
       },
     });

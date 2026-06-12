@@ -15,8 +15,13 @@ export class ZoneService {
     this.zoneRepository = new ZoneRepository();
   }
 
-  public async getStaticZones() {
-    const cacheKey = 'static:zones:metadata';
+  /**
+   * @method getStaticZones
+   * @description Fetches static infrastructure zones, safely isolated by airport context.
+   */
+  public async getStaticZones(airportId?: string) {
+    // ✅ Scope the cache key by airport context to prevent cross-airport data contamination
+    const cacheKey = `static:zones:metadata:${airportId || 'global'}`;
 
     try {
       const cached = await redisClient.get(cacheKey);
@@ -25,7 +30,7 @@ export class ZoneService {
       console.warn('[Redis] Zone cache read failed', error);
     }
 
-    const zones = await this.zoneRepository.getStaticZones();
+    const zones = await this.zoneRepository.getStaticZones(airportId);
 
     try {
       // Cache for 24 hours since airport zones basically never change
@@ -41,11 +46,15 @@ export class ZoneService {
    * @description Create new Zone
    */
   public async create(data: CreateZoneDTO) {
-    // 1. Business logic
-    // EG: Check if related entities exist, validate data, etc.
+    const newZone = await this.zoneRepository.create(data);
+    const cacheKey = `static:zones:metadata:${data.airportId}`;
+    try {
+      await redisClient.del(cacheKey);
+    } catch (error) {
+      console.warn(`[Redis] Failed to clear zone cache key: ${cacheKey}`, error);
+    }
 
-    // 2. Call Repository to create Zone
-    return await this.zoneRepository.create(data);
+    return newZone;
   }
 
   /**
@@ -70,12 +79,21 @@ export class ZoneService {
    * @description Update Zone by ID
    */
   public async update(id: string, data: UpdateZoneDTO) {
-    // 1. Verify existence
-    const zone = await this.zoneRepository.findById(id);
+    const zone = await this.zoneRepository.findByIdWithInfrastructure(id);
     if (!zone) throw new AppError(404, 'Zone not found');
 
-    // 2. Call Repository to update
-    return await this.zoneRepository.update(id, data);
+    const updatedZone = await this.zoneRepository.update(id, data);
+
+    // ✅ Clear cache for the zone's parent airport context if it exists
+    if (zone.airportId) {
+      try {
+        await redisClient.del(`static:zones:metadata:${zone.airportId}`);
+      } catch (error) {
+        console.warn('[Redis] Failed to clear cache upon zone update', error);
+      }
+    }
+
+    return updatedZone;
   }
 
   /**
@@ -83,7 +101,6 @@ export class ZoneService {
    * @description Safely removes a zone, preventing deletion if hardware is still deployed.
    */
   public async delete(id: string) {
-    // We use the infrastructure method to see if anything is inside it
     const zone = await this.zoneRepository.findByIdWithInfrastructure(id);
     if (!zone) throw new AppError(404, 'Zone not found');
 
@@ -94,7 +111,15 @@ export class ZoneService {
       );
     }
 
-    return await this.zoneRepository.delete(id);
+    const deleted = await this.zoneRepository.delete(id);
+
+    try {
+      await redisClient.del(`static:zones:metadata:${zone.airportId}`);
+    } catch (error) {
+      console.warn('[Redis] Failed to clear cache upon zone deletion', error);
+    }
+
+    return deleted;
   }
 
   /**
@@ -106,12 +131,9 @@ export class ZoneService {
     if (!zone) throw new AppError(404, 'Zone not found');
 
     const safeMaxCapacity = zone.maxCapacity ?? 1000;
-
-    // 1. SIMULATE LIVE CROWD DATA
-    const currentOccupancy = Math.floor(safeMaxCapacity * (Math.random() * 0.6 + 0.3)); // 30% to 90% full
+    const currentOccupancy = Math.floor(safeMaxCapacity * (Math.random() * 0.6 + 0.3));
     const capacityPercentage = Math.round((currentOccupancy / safeMaxCapacity) * 100);
 
-    // 2. GENERATE AI INSIGHT
     const generateInsight = (percentage: number) => {
       if (percentage > 85) {
         return {
@@ -131,19 +153,17 @@ export class ZoneService {
       };
     };
 
-    // Safely destructure as constants
     const { alertLevel, aiInsight } = generateInsight(capacityPercentage);
 
-    // 3. FORMAT CHART DATA (Ready for the Next.js Frontend)
     return {
       zoneName: zone.name,
       metrics: {
         maxCapacity: safeMaxCapacity,
         currentOccupancy,
         capacityPercentage,
-        alertLevel, // Explicitly used
+        alertLevel,
       },
-      aiAnalysis: aiInsight, // Explicitly used
+      aiAnalysis: aiInsight,
       historicalTrafficChart: [
         { time: '10:00', passengers: Math.floor(currentOccupancy * 0.5) },
         { time: '11:00', passengers: Math.floor(currentOccupancy * 0.8) },

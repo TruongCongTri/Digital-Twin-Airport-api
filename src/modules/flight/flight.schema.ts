@@ -26,18 +26,18 @@ export const createFlightSchema = z.object({
     flightNumber: z
       .string({ message: MESSAGES.VALIDATION.MUST_BE_STRING(FIELDS.FLIGHT_NUMBER) })
       .min(1, { message: MESSAGES.VALIDATION.REQUIRED(FIELDS.FLIGHT_NUMBER) }),
-
     airline: z
       .string({ message: MESSAGES.VALIDATION.MUST_BE_STRING(FIELDS.AIRLINE) })
       .min(1, { message: MESSAGES.VALIDATION.REQUIRED(FIELDS.AIRLINE) }),
-
     origin: z
       .string({ message: MESSAGES.VALIDATION.MUST_BE_STRING(FIELDS.ORIGIN) })
       .min(1, { message: MESSAGES.VALIDATION.REQUIRED(FIELDS.ORIGIN) }),
-
     destination: z
       .string({ message: MESSAGES.VALIDATION.MUST_BE_STRING(FIELDS.DESTINATION) })
       .min(1, { message: MESSAGES.VALIDATION.REQUIRED(FIELDS.DESTINATION) }),
+    airportId: z
+      .string({ message: 'Airport ID must be a string' })
+      .uuid({ message: 'Invalid Airport ID format' }),
   }),
 });
 
@@ -102,6 +102,17 @@ export const getFlightsQuerySchema = z.object({
   query: paginationSchema.extend({
     status: z.enum(FLIGHT_STATUSES).optional(),
     airline: z.string().optional(),
+    airportId: z.string().optional(), // Accepts "VVLT", "VVTS", or UUID
+  }),
+});
+
+/**
+ * @schema getStaticFlightsQuerySchema
+ * @description Validates query parameters for fetching static flights mapped in ArcGIS.
+ */
+export const getStaticFlightsQuerySchema = z.object({
+  query: z.object({
+    airportId: z.string().optional(), // Accepts "VVLT", "VVTS", or UUID
   }),
 });
 
@@ -111,3 +122,4 @@ export type UpdateFlightStatusDTO = z.infer<typeof updateFlightStatusSchema>['bo
 export type AllocateParkingDTO = z.infer<typeof allocateParkingSchema>['body'];
 export type AddTelemetryDTO = z.infer<typeof addTelemetrySchema>['body'];
 export type GetFlightsQuery = z.infer<typeof getFlightsQuerySchema>['query'];
+export type GetStaticFlightsQuery = z.infer<typeof getStaticFlightsQuerySchema>['query'];

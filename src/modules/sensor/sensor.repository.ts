@@ -1,4 +1,4 @@
-import { Prisma, Sensor, SensorStatus, SensorType } from '@/generated/client';
+import { Prisma, Sensor, SensorStatus, SensorType } from '@/generated/index';
 import { prisma } from '@/common/configs/prisma';
 import { BaseRepository } from '@/common/repositories/base.repository';
 import { CreateSensorDTO, GetSensorsQuery, UpdateSensorDTO } from './sensor.schema';
@@ -13,8 +13,15 @@ export class SensorRepository extends BaseRepository<Prisma.SensorDelegate> {
     super('sensor');
   }
 
-  public async getStaticSensors() {
+  public async getStaticSensors(airportId?: string) {
+    const where: Prisma.SensorWhereInput = {};
+
+    if (airportId) {
+      where.OR = [{ airportId: airportId }, { airport: { code: airportId } }];
+    }
+
     return await prisma.sensor.findMany({
+      where,
       select: {
         id: true,
         name: true,
@@ -49,6 +56,7 @@ export class SensorRepository extends BaseRepository<Prisma.SensorDelegate> {
         y: data.y,
         z: data.z,
         zoneId: data.zoneId,
+        airportId: data.airportId,
         ...(data.status && { status: data.status as SensorStatus }),
       },
     });
@@ -64,6 +72,10 @@ export class SensorRepository extends BaseRepository<Prisma.SensorDelegate> {
       ...(query.status && { status: query.status as SensorStatus }),
       ...(query.zoneId && { zoneId: query.zoneId }),
     };
+
+    if (query.airportId) {
+      where.OR = [{ airportId: query.airportId }, { airport: { code: query.airportId } }];
+    }
 
     return await this.executePagination<Sensor>({
       where,
@@ -82,7 +94,6 @@ export class SensorRepository extends BaseRepository<Prisma.SensorDelegate> {
    * @returns The updated Sensor record
    */
   public async updateById(id: string, data: UpdateSensorDTO) {
-    // Construct a clean update object explicitly
     const updateData: Prisma.SensorUpdateInput = {};
 
     if (data.name !== undefined) updateData.name = data.name;
@@ -91,8 +102,12 @@ export class SensorRepository extends BaseRepository<Prisma.SensorDelegate> {
     if (data.x !== undefined) updateData.x = data.x;
     if (data.y !== undefined) updateData.y = data.y;
     if (data.z !== undefined) updateData.z = data.z;
+
     if (data.zoneId !== undefined) {
       updateData.zone = { connect: { id: data.zoneId } };
+    }
+    if (data.airportId !== undefined) {
+      updateData.airport = { connect: { id: data.airportId } };
     }
 
     return await prisma.sensor.update({

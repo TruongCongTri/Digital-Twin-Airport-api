@@ -25,8 +25,12 @@ export class FlightService {
     this.flightRepository = new FlightRepository();
   }
 
-  public async getStaticMetadata() {
-    const cacheKey = 'static:flights:metadata';
+  /**
+   * @method getStaticMetadata
+   * @description Fetches low-mutation flight profile data, isolated by airport context.
+   */
+  public async getStaticMetadata(airportId?: string) {
+    const cacheKey = `static:flights:metadata:${airportId || 'global'}`;
 
     try {
       // 1. Check Redis First (O(1) Speed)
@@ -36,8 +40,8 @@ export class FlightService {
       console.warn('[Redis] Cache read failed, falling back to DB', error);
     }
 
-    // 2. Fallback to DB (Only fetch immutable data)
-    const flights = await this.flightRepository.getStaticMetadata();
+    // 2. Fallback to DB (Passes airportId context down to Prisma layer)
+    const flights = await this.flightRepository.getStaticMetadata(airportId);
 
     try {
       // 3. Save to Redis (Cache for 1 Hour)
@@ -58,11 +62,11 @@ export class FlightService {
   public async create(data: CreateFlightDTO) {
     const newFlight = await this.flightRepository.create(data);
 
-    // ✅ Clear the cache so the next UI load fetches the fresh DB state
+    const cacheKey = `static:flights:metadata:${data.airportId}`;
     try {
-      await redisClient.del('static:flights:metadata');
+      await redisClient.del(cacheKey);
     } catch (error) {
-      console.warn('[Redis] Failed to clear cache', error);
+      console.warn(`[Redis] Failed to clear cache key: ${cacheKey}`, error);
     }
 
     return newFlight;
@@ -136,8 +140,8 @@ export class FlightService {
         .emit('flight:allocation-changed', { flightId: id, parkingStandId: null });
     }
 
-    // ✅ 3. DEDUCE DIRECTION FROM STATE MACHINE
-    let updatedDirection: any = undefined; // 'INBOUND' | 'OUTBOUND' | 'TURNAROUND'
+    // 3. DEDUCE DIRECTION FROM STATE MACHINE
+    let updatedDirection: any = undefined;
 
     if (['SCHEDULED', 'APPROACHING', 'LANDED'].includes(newStatus)) {
       updatedDirection = 'INBOUND';
@@ -146,12 +150,11 @@ export class FlightService {
     } else if (['PUSHBACK', 'DEPARTED'].includes(newStatus)) {
       updatedDirection = 'OUTBOUND';
     } else if (newStatus === 'TAXIING') {
-      // Taxiing inherits direction from the previous state
       if (flight.status === 'LANDED') updatedDirection = 'INBOUND';
       if (flight.status === 'PUSHBACK') updatedDirection = 'OUTBOUND';
     }
 
-    // 4. APPLY UPDATE (Inject the calculated direction if it changed)
+    // 4. APPLY UPDATE
     const updatePayload: any = { status: newStatus };
     if (updatedDirection) {
       updatePayload.direction = updatedDirection;
@@ -179,8 +182,6 @@ export class FlightService {
     const stand = await this.flightRepository.getParkingStandById(data.parkingStandId);
     if (!stand) throw new AppError(404, 'Parking stand not found');
 
-    // 1. COLLISION CHECK
-    // If the stand is occupied, and the occupant IS NOT this exact flight, reject it.
     if (stand.isOccupied && flight.parkingStandId !== stand.id) {
       throw new AppError(
         409,
@@ -188,14 +189,8 @@ export class FlightService {
       );
     }
 
-    // 2. EXECUTE ATOMIC TRANSFER
-    // Handles safely freeing the old gate (if moving) and locking the new one
     await this.flightRepository.allocateParkingStandTx(id, stand.id, flight.parkingStandId);
-
-    // Fetch the newly updated flight with its new stand details
     const updatedFlight = await this.flightRepository.findByIdWithDetails(id);
-
-    // Broadcast to the UI so all dispatchers see the gate turn "Occupied" instantly
     socketConfig.getIO().emit('flight:allocation-changed', updatedFlight);
 
     return { message: `Flight successfully allocated to stand ${stand.code}` };
@@ -211,7 +206,6 @@ export class FlightService {
     const flight = await this.flightRepository.findById(id);
     if (!flight) throw new AppError(404, 'Flight not found');
 
-    // Physics & State Validation
     if (flight.status === 'CANCELLED') {
       throw new AppError(400, 'Cannot accept telemetry for a cancelled flight.');
     }
@@ -222,11 +216,8 @@ export class FlightService {
       );
     }
 
-    // 1. SAVE TO DATABASE (For historical playback later)
     const telemetry = await this.flightRepository.addTelemetry(id, data);
 
-    // 2. THE WOW FACTOR (Real-time 3D Engine update)
-    // Send data to Next.js so the ArcGIS 3D plane glides smoothly across the map
     socketConfig.getIO().emit('flight:telemetry', {
       flightId: id,
       flightNumber: flight.flightNumber,
@@ -244,7 +235,6 @@ export class FlightService {
    * @description Retrieves the historical GPS path for UI rendering.
    */
   public async getTelemetryHistory(id: string) {
-    // Verify flight exists first
     const flight = await this.flightRepository.findById(id);
     if (!flight) throw new AppError(404, 'Flight not found');
 
@@ -260,23 +250,20 @@ export class FlightService {
    * @description Ensures the physical reality of a plane's lifecycle is respected.
    */
   private validateStatusTransition(current: FlightStatus, target: FlightStatus) {
-    // If the status isn't changing, do nothing
     if (current === target) return;
 
-    // A cancelled or departed flight is closed. It cannot be resurrected.
     if (current === 'CANCELLED' || current === 'DEPARTED' || current === 'DIVERTED') {
       throw new AppError(400, `Cannot change status of a ${current} flight.`);
     }
 
-    // Strict sequential transitions (Simplified for Phase 1 Demo)
     const validNextStates: Record<FlightStatus, FlightStatus[]> = {
       SCHEDULED: ['APPROACHING', 'CANCELLED'],
-      DELAYED: ['APPROACHING', 'CANCELLED'], // Can recover from delay
-      APPROACHING: ['LANDED', 'DIVERTED', 'CANCELLED'], // Weather forces diversion
+      DELAYED: ['APPROACHING', 'CANCELLED'],
+      APPROACHING: ['LANDED', 'DIVERTED', 'CANCELLED'],
       LANDED: ['TAXIING', 'CANCELLED'],
-      TAXIING: ['PARKED', 'DEPARTED', 'CANCELLED'], // Taxiing back to gate after aborting takeoff
-      PARKED: ['BOARDING', 'PUSHBACK', 'CANCELLED'], // Mechanical failure at gate
-      BOARDING: ['PUSHBACK', 'CANCELLED', 'DELAYED'], // Passenger medical emergency, flight aborted
+      TAXIING: ['PARKED', 'DEPARTED', 'CANCELLED'],
+      PARKED: ['BOARDING', 'PUSHBACK', 'CANCELLED'],
+      BOARDING: ['PUSHBACK', 'CANCELLED', 'DELAYED'],
       PUSHBACK: ['TAXIING', 'CANCELLED'],
       DEPARTED: [],
       DIVERTED: [],

@@ -3,7 +3,12 @@ import { ZoneController } from './zone.controller';
 import { validate } from '@/middlewares/validate.middleware';
 import { ENDPOINTS } from '@/constants/endpoints';
 import { getIDSchema } from '@/common/schemas/reusable.schema';
-import { createZoneSchema, updateZoneSchema, getZonesQuerySchema } from './zone.schema';
+import {
+  createZoneSchema,
+  updateZoneSchema,
+  getZonesQuerySchema,
+  getStaticZonesQuerySchema,
+} from './zone.schema';
 
 /**
  * @class ZoneRoute
@@ -25,7 +30,12 @@ export class ZoneRoute {
   }
 
   private initializeRoutes() {
-    this.router.get(ENDPOINTS.ZONE.STATIC, this.zoneController.getStaticZones);
+    // [GET] Dropdown / Drop-list options for forms
+    this.router.get(
+      ENDPOINTS.ZONE.STATIC,
+      validate(getStaticZonesQuerySchema),
+      this.zoneController.getStaticZones
+    );
 
     // [POST] Create a new Zone
     this.router.post(

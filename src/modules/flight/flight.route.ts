@@ -12,6 +12,7 @@ import {
   allocateParkingSchema,
   createFlightSchema,
   getFlightsQuerySchema,
+  getStaticFlightsQuerySchema,
   updateFlightStatusSchema,
 } from './flight.schema';
 import { ENDPOINTS } from '@/constants/endpoints';
@@ -48,38 +49,35 @@ export class FlightRoute {
     // CORE FLIGHT OPERATIONS
     // =========================================================
 
-    /**
-     * @route POST /api/v1/flights
-     * @description Registers a new scheduled flight.
-     */
+    // [POST] CREATE NEW FLIGHT
     this.router.post(
-      ENDPOINTS.FLIGHT.GET_ALL, // Maps to '/'
+      ENDPOINTS.FLIGHT.GET_ALL,
       validate(createFlightSchema),
       this.flightController.create
     );
 
-    /**
-     * @route GET /api/v1/flights
-     * @description Fetches the paginated dispatcher manifest.
-     */
+    // [GET] GET ALL FLIGHTS (Dispatcher Manifest)
     this.router.get(
       ENDPOINTS.FLIGHT.GET_ALL,
       validate(getFlightsQuerySchema),
       this.flightController.getAll
     );
 
-    this.router.get(ENDPOINTS.FLIGHT.STATIC, this.flightController.getStaticMetadata);
+    // [GET] STATIC FLIGHT PROFILES (ArcGIS Initial Rendering Map State)
+    this.router.get(
+      ENDPOINTS.FLIGHT.STATIC,
+      validate(getStaticFlightsQuerySchema),
+      this.flightController.getStaticMetadata
+    );
 
-    // 2. STATIC/SPECIFIC ROUTES (MUST BE PLACED BEFORE /:id ROUTES)
-    // [GET] /api/v1/flights/active
+    // [GET] GET ACTIVE SURFACE FLIGHTS
     this.router.get(
       ENDPOINTS.FLIGHT.ACTIVE,
       validate(getFlightsQuerySchema),
       this.flightController.getActive
     );
 
-    // 3. DYNAMIC ID ROUTES
-    // [GET] /api/v1/flights/:id
+    // [GET] GET FLIGHT DETAILS BY ID
     this.router.get(
       ENDPOINTS.FLIGHT.DETAIL,
       validate(getIDSchema),
@@ -95,7 +93,7 @@ export class FlightRoute {
      * @description Transitions a flight through its physical lifecycle.
      */
     this.router.patch(
-      ENDPOINTS.FLIGHT.STATUS, // Maps to '/:id/status'
+      ENDPOINTS.FLIGHT.STATUS,
       validate(getIDSchema),
       validate(updateFlightStatusSchema),
       this.flightController.updateStatus

@@ -24,9 +24,10 @@ export class FlightController {
     this.flightService = new FlightService();
   }
 
-  public getStaticMetadata = async (_req: Request, res: Response) => {
+  public getStaticMetadata = async (req: Request, res: Response) => {
     try {
-      const data = await this.flightService.getStaticMetadata();
+      const airportId = req.query.airportId as string | undefined;
+      const data = await this.flightService.getStaticMetadata(airportId);
 
       successResponse(res, {
         statusCode: 200,
@@ -34,7 +35,6 @@ export class FlightController {
         data,
       });
     } catch (error: any) {
-      // ✅ This will print the EXACT reason it is crashing to your backend terminal
       console.error('🔥 [Flight Controller] Crash:', error.message);
       res.status(500).json({ success: false, message: error.message });
     }

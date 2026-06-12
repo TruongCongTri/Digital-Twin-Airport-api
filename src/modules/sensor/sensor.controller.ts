@@ -22,9 +22,11 @@ export class SensorController {
     this.sensorService = new SensorService();
   }
 
-  public getStaticSensors = async (_req: Request, res: Response) => {
+  public getStaticSensors = async (req: Request, res: Response) => {
     try {
-      const data = await this.sensorService.getStaticSensors();
+      // ✅ Extract airportId from query parameters (e.g., ?airportId=VVTS)
+      const airportId = req.query.airportId as string | undefined;
+      const data = await this.sensorService.getStaticSensors(airportId);
 
       successResponse(res, {
         statusCode: 200,
@@ -62,7 +64,7 @@ export class SensorController {
       statusCode: 200,
       message: MESSAGES.COMMON.SUCCESS.FETCHED(RESOURCES.SENSOR),
       data,
-      meta, // Automatically structures standard pagination metadata
+      meta,
     });
   };
 
@@ -71,7 +73,6 @@ export class SensorController {
    */
   public getDetail = async (req: Request, res: Response) => {
     const id = req.params.id as string;
-
     const data = await this.sensorService.getDetail(id);
 
     successResponse(res, {
@@ -87,7 +88,6 @@ export class SensorController {
   public update = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const payload = req.body as UpdateSensorDTO;
-
     const data = await this.sensorService.update(id, payload);
 
     successResponse(res, {
@@ -102,11 +102,10 @@ export class SensorController {
    */
   public delete = async (req: Request, res: Response) => {
     const id = req.params.id as string;
-
     await this.sensorService.delete(id);
 
     successResponse(res, {
-      statusCode: 200, // Or 204 No Content
+      statusCode: 200,
       message: MESSAGES.COMMON.SUCCESS.DELETED(RESOURCES.SENSOR),
     });
   };
@@ -119,7 +118,7 @@ export class SensorController {
 
     successResponse(res, {
       statusCode: 200,
-      message: MESSAGES.COMMON.SUCCESS.FETCHED(RESOURCES.SENSOR), // Or create a RESOURCES.SENSOR_LOG
+      message: MESSAGES.COMMON.SUCCESS.FETCHED(RESOURCES.SENSOR),
       data,
       meta,
     });

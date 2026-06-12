@@ -17,9 +17,11 @@ export class ZoneController {
     this.zoneService = new ZoneService();
   }
 
-  public getStaticZones = async (_req: Request, res: Response) => {
+  public getStaticZones = async (req: Request, res: Response) => {
     try {
-      const data = await this.zoneService.getStaticZones();
+      // ✅ Extract airportId context from query parameter mapping
+      const airportId = req.query.airportId as string | undefined;
+      const data = await this.zoneService.getStaticZones(airportId);
 
       successResponse(res, {
         statusCode: 200,
@@ -37,7 +39,6 @@ export class ZoneController {
    */
   public create = async (req: Request, res: Response) => {
     const payload = req.body as CreateZoneDTO;
-
     const data = await this.zoneService.create(payload);
 
     successResponse(res, {

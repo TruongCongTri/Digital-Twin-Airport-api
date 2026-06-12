@@ -25,6 +25,17 @@ export const SENSOR_STATUSES: [string, ...string[]] = [
   'OFFLINE',
   'UNREACHABLE',
 ];
+
+/**
+ * @schema getStaticSensorsQuerySchema
+ * @description Validates query parameters for fetching static sensors (e.g., ?airportId=VVTS)
+ */
+export const getStaticSensorsQuerySchema = z.object({
+  query: z.object({
+    airportId: z.string({ message: 'airportId must be a string' }).optional(),
+  }),
+});
+
 /**
  * @schema createSensorSchema
  * @description Validates incoming payload for creating a new IoT sensor mapped in ArcGIS.
@@ -34,34 +45,19 @@ export const createSensorSchema = z.object({
     name: z
       .string({ message: MESSAGES.VALIDATION.MUST_BE_STRING(FIELDS.TITLE) })
       .min(1, { message: MESSAGES.VALIDATION.REQUIRED(FIELDS.TITLE) }),
-
-    type: z.enum(SENSOR_TYPES, {
-      message: MESSAGES.VALIDATION.INVALID_ENUM(FIELDS.TYPE),
-    }),
-
+    type: z.enum(SENSOR_TYPES, { message: MESSAGES.VALIDATION.INVALID_ENUM(FIELDS.TYPE) }),
     status: z
-      .enum(SENSOR_STATUSES, {
-        message: MESSAGES.VALIDATION.INVALID_ENUM(FIELDS.STATUS),
-      })
+      .enum(SENSOR_STATUSES, { message: MESSAGES.VALIDATION.INVALID_ENUM(FIELDS.STATUS) })
       .optional(),
-
-    x: z.number({
-      message: MESSAGES.VALIDATION.ONLY_NUMBERS(FIELDS.X),
-    }),
-
-    y: z.number({
-      message: MESSAGES.VALIDATION.ONLY_NUMBERS(FIELDS.Y),
-    }),
-
-    z: z.number({
-      message: MESSAGES.VALIDATION.ONLY_NUMBERS(FIELDS.Z),
-    }),
-
+    x: z.number({ message: MESSAGES.VALIDATION.ONLY_NUMBERS(FIELDS.X) }),
+    y: z.number({ message: MESSAGES.VALIDATION.ONLY_NUMBERS(FIELDS.Y) }),
+    z: z.number({ message: MESSAGES.VALIDATION.ONLY_NUMBERS(FIELDS.Z) }),
     zoneId: z
-      .string({
-        message: MESSAGES.VALIDATION.MUST_BE_STRING(FIELDS.ZONE),
-      })
+      .string({ message: MESSAGES.VALIDATION.MUST_BE_STRING(FIELDS.ZONE) })
       .uuid({ message: MESSAGES.VALIDATION.INVALID_UUID(FIELDS.ZONE) }),
+    airportId: z
+      .string({ message: 'Airport ID must be a string' })
+      .uuid({ message: 'Invalid Airport ID format' }),
   }),
 });
 
@@ -89,6 +85,7 @@ export const getSensorsQuerySchema = z.object({
     type: z.enum(SENSOR_TYPES).optional(),
     status: z.enum(SENSOR_STATUSES).optional(),
     zoneId: z.string().uuid().optional(),
+    airportId: z.string().optional(), // Accepts "VVLT" or UUID
   }),
 });
 
@@ -104,6 +101,7 @@ export const getSensorHistoryQuerySchema = z.object({
       endDate: z.string().datetime({ message: 'endDate must be a valid ISO Date' }).optional(),
       type: z.enum(SENSOR_TYPES).optional(),
       zoneId: z.string().uuid().optional(),
+      airportId: z.string().optional(), // Accepts "VVLT" or UUID
     })
     .refine(
       (data) => {
@@ -121,11 +119,12 @@ export const getSensorHistoryQuerySchema = z.object({
       },
       {
         message: 'Date range invalid or exceeds the maximum 7-day limit.',
-        path: ['endDate'], // The error will be attached to the endDate field in the API response
+        path: ['endDate'],
       }
     ),
 });
 
+export type GetStaticSensorsQuery = z.infer<typeof getStaticSensorsQuerySchema>['query'];
 export type CreateSensorDTO = z.infer<typeof createSensorSchema>['body'];
 export type UpdateSensorDTO = z.infer<typeof updateSensorSchema>['body'];
 export type GetSensorsQuery = z.infer<typeof getSensorsQuerySchema>['query'];

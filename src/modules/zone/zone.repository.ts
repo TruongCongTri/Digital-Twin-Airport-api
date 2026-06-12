@@ -1,4 +1,4 @@
-import { Prisma, ZoneType } from '@/generated/client';
+import { Prisma, ZoneType } from '@/generated/index';
 import { prisma } from '@/common/configs/prisma';
 import { BaseRepository } from '@/common/repositories/base.repository';
 import { CreateZoneDTO, GetZonesQuery } from './zone.schema';
@@ -18,9 +18,19 @@ export class ZoneRepository extends BaseRepository<Prisma.ZoneDelegate> {
     super('zone');
   }
 
-  public async getStaticZones() {
-    // Only fetch the skeleton data needed for UI Dropdowns/Menus
+  /**
+   * @method getStaticZones
+   * @description Only fetch the skeleton data needed for UI Dropdowns/Menus scoped by tenant context.
+   */
+  public async getStaticZones(airportId?: string) {
+    const where: Prisma.ZoneWhereInput = {};
+
+    if (airportId) {
+      where.OR = [{ airportId: airportId }, { airport: { code: airportId } }];
+    }
+
     return await prisma.zone.findMany({
+      where,
       select: {
         id: true,
         name: true,
@@ -47,12 +57,14 @@ export class ZoneRepository extends BaseRepository<Prisma.ZoneDelegate> {
         maxCapacity: data.maxCapacity,
         gisItemId: data.gisItemId ?? null,
         gisSceneUrl: data.gisSceneUrl ?? null,
+        airportId: data.airportId,
       },
     });
   }
 
   /**
    * @method findManyWithPagination
+   * @description Fetch paginated zones filtered by floor levels, structural types, and airport tenant context.
    */
   public async findManyWithPagination(query: GetZonesQuery) {
     const where: Prisma.ZoneWhereInput = {};
@@ -63,6 +75,10 @@ export class ZoneRepository extends BaseRepository<Prisma.ZoneDelegate> {
 
     if (query.floorLevel !== undefined) {
       where.floorLevel = query.floorLevel;
+    }
+
+    if (query.airportId) {
+      where.OR = [{ airportId: query.airportId }, { airport: { code: query.airportId } }];
     }
 
     return await this.executePagination<ZoneWithInfrastructure>({

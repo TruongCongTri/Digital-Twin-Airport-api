@@ -14,8 +14,7 @@ export const ZONE_TYPES = [
 
 /**
  * @schema createZoneSchema
- * @description Validates incoming payload for creating a new score event.
- *
+ * @description Validates incoming payload for creating a new terminal spatial zone.
  */
 export const createZoneSchema = z.object({
   body: z.object({
@@ -41,6 +40,10 @@ export const createZoneSchema = z.object({
       .regex(/^[a-fA-F0-9]+$/, { message: 'ArcGIS Item ID must be a valid hexadecimal string.' })
       .optional(),
     gisSceneUrl: z.string().url().optional(),
+
+    airportId: z
+      .string({ message: 'Airport ID must be a string' })
+      .uuid({ message: 'Invalid Airport ID format' }),
   }),
 });
 
@@ -58,14 +61,29 @@ export const updateZoneSchema = z.object({
   }),
 });
 
+/**
+ * @schema getZonesQuerySchema
+ * @description Validates query parameters for filtering terminal zones.
+ */
 export const getZonesQuerySchema = z.object({
   query: paginationSchema.extend({
     type: z.enum(ZONE_TYPES).optional(),
-    // Coerce is necessary because GET query parameters arrive as strings
     floorLevel: z.coerce.number().int().optional(),
+    airportId: z.string().optional(), // Accepts raw UUID or ICAO code
+  }),
+});
+
+/**
+ * @schema getStaticZonesQuerySchema
+ * @description Validates incoming query params for fetching skeletal drop-down options.
+ */
+export const getStaticZonesQuerySchema = z.object({
+  query: z.object({
+    airportId: z.string().optional(), // Accepts raw UUID or ICAO code
   }),
 });
 
 export type CreateZoneDTO = z.infer<typeof createZoneSchema>['body'];
 export type UpdateZoneDTO = z.infer<typeof updateZoneSchema>['body'];
 export type GetZonesQuery = z.infer<typeof getZonesQuerySchema>['query'];
+export type GetStaticZonesQuery = z.infer<typeof getStaticZonesQuerySchema>['query'];

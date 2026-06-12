@@ -1,4 +1,4 @@
-import { Prisma, FlightStatus, ParkingStand, Flight } from '@/generated/client';
+import { Prisma, FlightStatus, ParkingStand, Flight } from '@/generated/index';
 import { prisma } from '@/common/configs/prisma';
 import { BaseRepository } from '@/common/repositories/base.repository';
 import { AddTelemetryDTO, CreateFlightDTO, GetFlightsQuery } from './flight.schema';
@@ -12,8 +12,15 @@ export class FlightRepository extends BaseRepository<Flight> {
     super('flight');
   }
 
-  public async getStaticMetadata() {
+  public async getStaticMetadata(airportId?: string) {
+    const where: Prisma.FlightWhereInput = {};
+
+    if (airportId) {
+      where.OR = [{ airportId: airportId }, { airport: { code: airportId } }];
+    }
+
     return await prisma.flight.findMany({
+      where,
       select: {
         id: true,
         flightNumber: true,
@@ -37,6 +44,7 @@ export class FlightRepository extends BaseRepository<Flight> {
         airline: data.airline,
         origin: data.origin,
         destination: data.destination,
+        airportId: data.airportId,
       },
     });
   }
@@ -51,6 +59,10 @@ export class FlightRepository extends BaseRepository<Flight> {
     if (query.status !== undefined) where.status = query.status as FlightStatus;
     if (query.airline !== undefined)
       where.airline = { contains: query.airline, mode: 'insensitive' };
+
+    if (query.airportId) {
+      where.OR = [{ airportId: query.airportId }, { airport: { code: query.airportId } }];
+    }
 
     return await this.executePagination<FlightWithParkingStand>({
       where,
@@ -79,6 +91,10 @@ export class FlightRepository extends BaseRepository<Flight> {
         in: ['LANDED', 'TAXIING', 'PARKED', 'BOARDING', 'PUSHBACK'],
       },
     };
+
+    if (query.airportId) {
+      where.OR = [{ airportId: query.airportId }, { airport: { code: query.airportId } }];
+    }
 
     return await this.executePagination({
       where,
@@ -191,6 +207,10 @@ export class FlightRepository extends BaseRepository<Flight> {
 
     if (query.airline !== undefined) {
       where.airline = { contains: query.airline, mode: 'insensitive' };
+    }
+
+    if (query.airportId) {
+      where.OR = [{ airportId: query.airportId }, { airport: { code: query.airportId } }];
     }
 
     return await this.executePagination<FlightWithParkingStand>({

@@ -5,9 +5,10 @@
 import { prisma } from './common/configs/prisma';
 import { env } from './common/configs/env';
 import app from './app';
+
 import { createServer } from 'http';
 import { socketConfig } from './common/configs/socket';
-import { SimulationService } from './modules/simulation/simulation.service';
+import { SimulationService } from './modules/simulation/simulation-v2.service';
 import { createClient } from 'redis';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { Server as SocketIOServer } from 'socket.io';
