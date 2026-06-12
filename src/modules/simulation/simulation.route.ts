@@ -32,6 +32,8 @@ export class SimulationRoute {
       validate(triggerScenarioSchema),
       this.simulationController.triggerScenario
     );
+
+    this.router.post('/pipeline/force', this.simulationController.forcePipeline);
   }
 
   private bootDaemon() {

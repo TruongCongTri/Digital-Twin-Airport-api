@@ -207,7 +207,6 @@ export class SimulationService {
 
     // 3. BOOT GROUND VEHICLES (CIVILIAN TRAFFIC)
     const groundVehicles = await prisma.groundVehicle.findMany({
-      // ✅ Removed the invalid { status: { not: 'OFFLINE' } } where clause
       include: {
         airport: true,
         telemetry: { take: 1, orderBy: { timestamp: 'desc' } },
@@ -216,18 +215,15 @@ export class SimulationService {
 
     groundVehicles.forEach((v: any) => {
       const airportCode = v.airport.code;
-      // We assume civilian cars use the standard taxi paths defined for terminals
       const terminalKey = airportCode === 'VVTS' ? 'DOMESTIC' : 'T1';
       const routes = this.getAirportRoutes(airportCode) as any;
       const taxiPath = (routes[terminalKey]?.taxiPath as { lat: number; lng: number }[]) || [];
 
-      // ✅ FIX: Explicitly grab the first item and type-check it for TypeScript
       const firstWaypoint = taxiPath[0];
       if (!firstWaypoint) return;
 
       const lastTelemetry = v.telemetry && v.telemetry.length > 0 ? v.telemetry[0] : null;
 
-      // ✅ Now TypeScript knows firstWaypoint is safely defined!
       const startLat = lastTelemetry?.latitude ?? firstWaypoint.lat;
       const startLng = lastTelemetry?.longitude ?? firstWaypoint.lng;
 
@@ -274,6 +270,124 @@ export class SimulationService {
     this.stop();
     await new Promise((resolve) => setTimeout(resolve, 500));
     return await this.start();
+  }
+
+  // ✅ NEW: Reset all flights to base states
+  public async resetFlights(): Promise<{ message: string }> {
+    console.log('[Simulation Engine] Resetting flight pipeline...');
+    const wasRunning = this.isRunning;
+    if (wasRunning) this.stop();
+
+    // Reset flights with assigned stands back to PARKED
+    await prisma.flight.updateMany({
+      where: { parkingStandId: { not: null } },
+      data: { status: 'PARKED', direction: 'TURNAROUND' },
+    });
+
+    // Reset unassigned flights back to SCHEDULED
+    await prisma.flight.updateMany({
+      where: { parkingStandId: null },
+      data: { status: 'SCHEDULED', direction: 'TURNAROUND' },
+    });
+
+    if (wasRunning) await this.start();
+    return { message: 'All flights successfully reset to base states.' };
+  }
+
+  // ✅ NEW: Manually force an inbound flight
+  public async triggerFlightInbound(airportCode: string): Promise<{ message: string }> {
+    // Find an inactive flight that belongs to this airport
+    const recycledFlight = await prisma.flight.findFirst({
+      where: {
+        airport: { code: airportCode },
+        status: { notIn: ['LANDED', 'TAXIING', 'PARKED', 'PUSHBACK', 'APPROACHING'] },
+      },
+      include: { airport: true },
+    });
+
+    if (!recycledFlight)
+      return { message: `No available flights to trigger inbound at ${airportCode}.` };
+
+    // Find an empty parking stand
+    const activeFlights = await prisma.flight.findMany({
+      where: {
+        status: { in: ['APPROACHING', 'LANDED', 'TAXIING', 'PARKED', 'PUSHBACK'] },
+        airportId: recycledFlight.airportId,
+      },
+    });
+
+    const usedStands = new Set(activeFlights.map((f) => f.parkingStandId).filter(Boolean));
+    const allStands = await prisma.parkingStand.findMany({
+      where: { zone: { airportId: recycledFlight.airportId } },
+    });
+
+    const freeStands = allStands.filter((s) => !usedStands.has(s.id));
+
+    if (freeStands.length === 0)
+      return { message: `No free parking stands at ${airportCode} for inbound flight.` };
+
+    const newStand = freeStands[Math.floor(Math.random() * freeStands.length)];
+    if (!newStand) return { message: 'No valid stand found.' };
+    await prisma.flight.update({
+      where: { id: recycledFlight.id },
+      data: { status: 'APPROACHING', direction: 'INBOUND', parkingStandId: newStand.id },
+    });
+
+    return {
+      message: `Flight ${recycledFlight.flightNumber} triggered INBOUND to ${newStand.code}.`,
+    };
+  }
+
+  // ✅ NEW: Manually force an outbound flight
+  public async triggerFlightOutbound(airportCode: string): Promise<{ message: string }> {
+    // Find a parked flight at this airport
+    const parkedFlight = Array.from(this.flightStates.values()).find(
+      (f) => f.airportCode === airportCode && f.status === 'PARKED'
+    );
+
+    if (!parkedFlight)
+      return { message: `No PARKED flights available to depart at ${airportCode}.` };
+
+    const lockKey = `${airportCode}_OUTBOUND`;
+    if (this.reservedRoutes.has(lockKey)) {
+      return { message: `Outbound runway at ${airportCode} is currently occupied.` };
+    }
+
+    this.reservedRoutes.add(lockKey);
+    parkedFlight.direction = 'OUTBOUND';
+    this.changeFlightStatus(parkedFlight, 'PUSHBACK', 0);
+    parkedFlight.activeRouteId = lockKey;
+
+    return { message: `Flight ${parkedFlight.flightNumber} triggered OUTBOUND.` };
+  }
+
+  public async forcePipeline(airportCode: string): Promise<{ message: string }> {
+    console.log(`[Simulation Engine] Forcing full pipeline for ${airportCode}...`);
+
+    const wasRunning = this.isRunning;
+    if (wasRunning) this.stop();
+
+    try {
+      // 1. Reset all flights to base states (Clears the taxiways)
+      await this.resetFlights();
+
+      // 2. Refresh the local memory state so the engine sees the reset
+      await this.start();
+
+      // 3. Trigger exactly one flight to land
+      const inboundRes = await this.triggerFlightInbound(airportCode);
+
+      // 4. Trigger exactly one flight to depart
+      const outboundRes = await this.triggerFlightOutbound(airportCode);
+
+      return {
+        message: `Pipeline forced successfully. Inbound: ${inboundRes.message} | Outbound: ${outboundRes.message}`,
+      };
+    } catch (error) {
+      console.error('[Simulation Engine] Pipeline force failed:', error);
+      if (!this.isRunning && wasRunning) await this.start(); // Ensure it restarts on fail
+      return { message: 'Failed to force pipeline.' };
+    }
   }
 
   public getStatus() {
@@ -615,18 +729,15 @@ export class SimulationService {
     }
   }
 
-  // ✅ Civilian Vehicle Lifecycle Logic (with TS fix)
   private calculateNextVehiclePosition(vehicle: VehicleSimState) {
     if (!vehicle.route || vehicle.route.length === 0) return;
 
-    // Simulate Drop-off / Pick-up delays
     if (vehicle.status === 'DROPPING_OFF' || vehicle.status === 'PICKING_UP') {
       if (vehicle.ticksInState > 10) {
         vehicle.status = vehicle.status === 'DROPPING_OFF' ? 'EXITING' : 'APPROACHING_DROP_OFF';
-        vehicle.speed = 20; // Resume driving
+        vehicle.speed = 20;
         vehicle.ticksInState = 0;
 
-        // Broadcast state change to database (fire & forget)
         prisma.groundVehicle
           .update({ where: { id: vehicle.id }, data: { status: vehicle.status } })
           .catch(console.error);
@@ -634,7 +745,7 @@ export class SimulationService {
       return;
     }
 
-    if (vehicle.status === 'PARKED') return; // Do nothing if parked
+    if (vehicle.status === 'PARKED') return;
 
     const target = vehicle.route[vehicle.currentWaypointIndex];
     if (!target) return;
@@ -648,13 +759,11 @@ export class SimulationService {
 
     const distToTarget = Math.abs(vehicle.lat - target.lat) + Math.abs(vehicle.lng - target.lng);
 
-    // Reached Waypoint
     if (distToTarget <= distancePerTick * 1.5) {
       vehicle.lat = target.lat;
       vehicle.lng = target.lng;
       vehicle.currentWaypointIndex++;
 
-      // Terminal logic (middle of route)
       if (vehicle.currentWaypointIndex === Math.floor(vehicle.route.length / 2)) {
         vehicle.status = vehicle.status === 'APPROACHING_DROP_OFF' ? 'DROPPING_OFF' : 'PICKING_UP';
         vehicle.speed = 0;
@@ -664,9 +773,7 @@ export class SimulationService {
           .catch(console.error);
       }
 
-      // Reached End of Route
       if (vehicle.currentWaypointIndex >= vehicle.route.length) {
-        // ✅ FIX: Use strict null check for the starting waypoint array index
         const startPoint = vehicle.route[0];
         if (startPoint) {
           vehicle.currentWaypointIndex = 1;

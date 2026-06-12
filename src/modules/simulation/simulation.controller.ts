@@ -30,6 +30,18 @@ export class SimulationController {
     successResponse(res, { message: 'Status retrieved', data });
   };
 
+  public forcePipeline = async (req: Request, res: Response): Promise<void> => {
+    const { airportCode } = req.body;
+
+    if (!airportCode) {
+      res.status(400).json({ success: false, message: 'airportCode is required' });
+      return; // ✅ Fix: Explicit empty return matches Promise<void>
+    }
+
+    const data = await this.simulationService.forcePipeline(airportCode);
+    successResponse(res, { statusCode: 200, message: 'Pipeline executed', data });
+  };
+
   public triggerScenario = async (req: Request, res: Response) => {
     const payload = req.body as TriggerScenarioDTO;
 
