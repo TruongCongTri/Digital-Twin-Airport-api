@@ -37,6 +37,16 @@ export const getStaticSensorsQuerySchema = z.object({
 });
 
 /**
+ * @schema getLiveSensorsQuerySchema
+ * @description Validates query parameters for fetching live sensor values (e.g., ?airportId=VVTS)
+ */
+export const getLiveSensorsQuerySchema = z.object({
+  query: z.object({
+    airportId: z.string({ message: 'airportId must be a string' }).min(1),
+  }),
+});
+
+/**
  * @schema createSensorSchema
  * @description Validates incoming payload for creating a new IoT sensor mapped in ArcGIS.
  */
@@ -129,3 +139,48 @@ export type CreateSensorDTO = z.infer<typeof createSensorSchema>['body'];
 export type UpdateSensorDTO = z.infer<typeof updateSensorSchema>['body'];
 export type GetSensorsQuery = z.infer<typeof getSensorsQuerySchema>['query'];
 export type GetSensorHistoryQuery = z.infer<typeof getSensorHistoryQuerySchema>['query'];
+
+/**
+ * @description History granularities: raw minute samples, hourly rollups, or day buckets
+ * (local calendar days in `tz`). `auto` picks the finest one that keeps rows manageable.
+ */
+export const SERIES_GRANULARITIES = ['auto', 'raw', 'hour', 'day'] as const;
+export const MAX_SERIES_RANGE_DAYS = 400;
+
+const isTimeZone = (tz: string) => {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * @schema getSensorSeriesQuerySchema
+ * @description Validates a history query for one sensor (datatable + chart).
+ */
+export const getSensorSeriesQuerySchema = z.object({
+  query: z
+    .object({
+      startDate: z.string().datetime({ message: 'startDate must be a valid ISO Date' }),
+      endDate: z.string().datetime({ message: 'endDate must be a valid ISO Date' }),
+      granularity: z.enum(SERIES_GRANULARITIES).default('auto'),
+      tz: z
+        .string()
+        .default('Asia/Ho_Chi_Minh')
+        .refine(isTimeZone, { message: 'tz must be an IANA time zone, e.g. Asia/Ho_Chi_Minh' }),
+    })
+    .refine((q) => new Date(q.startDate) < new Date(q.endDate), {
+      message: 'startDate must be before endDate',
+      path: ['startDate'],
+    })
+    .refine(
+      (q) =>
+        new Date(q.endDate).getTime() - new Date(q.startDate).getTime() <=
+        MAX_SERIES_RANGE_DAYS * 24 * 60 * 60 * 1000,
+      { message: `Range cannot exceed ${MAX_SERIES_RANGE_DAYS} days`, path: ['endDate'] }
+    ),
+});
+
+export type GetSensorSeriesQuery = z.infer<typeof getSensorSeriesQuerySchema>['query'];

@@ -16,7 +16,22 @@ const envSchema = z.object({
   PORT: z.string().default(APP_CONFIG.SERVER.DEFAULT_PORT),
   DATABASE_URL: z.string().min(1, MESSAGES.SERVER.CONFIGURE(FIELDS.DB)),
   CLIENT_URL: z.string().min(1, MESSAGES.SERVER.CONFIGURE(FIELDS.CLIENT)),
-  REDIS_URL: z.string().min(1, MESSAGES.SERVER.CONFIGURE(FIELDS.REDIS)),
+  REDIS_URL: z
+    .string()
+    .min(1, MESSAGES.SERVER.CONFIGURE(FIELDS.REDIS))
+    .default('redis://localhost:6380'), // Local Docker Redis (see docker-compose.yml)
+  // Socket.IO Redis adapter: only needed when running MORE THAN ONE API instance.
+  // When enabled, every socket emit becomes a Redis PUBLISH (expensive on Upstash free tier).
+  SOCKET_REDIS_ADAPTER: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  // How often the live sensor snapshot is persisted to Redis (memory is updated every tick)
+  LIVE_SENSOR_CACHE_FLUSH_SECONDS: z.coerce.number().int().min(10).default(300),
+  // Sensor history retention: raw minute samples (min 2h, rollups are rebuilt from them)
+  // and hourly min/max/avg rollups that back week / month / custom-range history
+  SENSOR_RAW_RETENTION_HOURS: z.coerce.number().int().min(2).default(48),
+  SENSOR_ROLLUP_RETENTION_DAYS: z.coerce.number().int().min(1).default(400),
   JWT_SECRET: z.string().min(10),
   JWT_EXPIRES_IN: z.string().default('15m'), // Mặc định là 15 phút
   JWT_REFRESH_SECRET: z.string().min(10),

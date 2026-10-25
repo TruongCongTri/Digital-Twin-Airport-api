@@ -4,7 +4,9 @@ import { validate } from '@/middlewares/validate.middleware';
 import {
   createSensorSchema,
   getSensorHistoryQuerySchema,
+  getSensorSeriesQuerySchema,
   getSensorsQuerySchema,
+  getLiveSensorsQuerySchema,
   getStaticSensorsQuerySchema,
   updateSensorSchema,
 } from './sensor.schema';
@@ -62,6 +64,13 @@ export class SensorRoute {
       this.sensorController.getStaticSensors
     );
 
+    // [GET] LIVE SENSOR VALUES (Served from cache, refreshed every simulation tick)
+    this.router.get(
+      ENDPOINTS.SENSOR.LIVE,
+      validate(getLiveSensorsQuerySchema),
+      this.sensorController.getLiveSensors
+    );
+
     // [GET] GET DETAILS OF Sensor BY ID
     this.router.get(
       ENDPOINTS.SENSOR.DETAIL,
@@ -75,6 +84,14 @@ export class SensorRoute {
       validate(getIDSchema),
       validate(getSensorHistoryQuerySchema),
       this.sensorController.getHistoryForSensor
+    );
+
+    // [GET] HISTORY SERIES FOR A SPECIFIC SENSOR (raw / hourly / daily, any period)
+    this.router.get(
+      ENDPOINTS.SENSOR.SERIES,
+      validate(getIDSchema),
+      validate(getSensorSeriesQuerySchema),
+      this.sensorController.getSeries
     );
 
     // [PATCH] UPDATE Sensor BY ID

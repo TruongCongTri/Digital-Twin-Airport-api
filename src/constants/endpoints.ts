@@ -42,8 +42,10 @@ export const ENDPOINTS = {
     TYPES: '/metadata/types', // Returns available sensor types for UI dropdowns
     DETAIL: '/:id',
     HISTORY: '/:id/history', // Fetch historical time-series data for line charts
+    SERIES: '/:id/series', // History datatable: raw / hourly / daily buckets for any period
     GLOBAL_HISTORY: '/logs/all',
     STATIC: '/static',
+    LIVE: '/live',
   },
 
   /* --- Crowd Management (AI Camera Mock) --- */

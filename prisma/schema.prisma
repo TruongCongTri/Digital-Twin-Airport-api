@@ -201,6 +201,7 @@ model Sensor {
   zoneId        String
   zone          Zone         @relation(fields: [zoneId], references: [id], onDelete: Cascade)
   logs          SensorLog[]
+  hourlyLogs    SensorLogHourly[]
   
   gisFeatureId  String?  
 
@@ -223,6 +224,23 @@ model SensorLog {
   
   @@index([sensorId, timestamp(sort: Desc)]) 
   @@map("sensor_logs")
+}
+
+/// Hourly rollup of sensor_logs (min / max / avg / sample count per sensor per hour).
+/// Raw logs are kept for a short window; rollups back week / month / custom-range history.
+model SensorLogHourly {
+  id        String   @id @default(uuid())
+  sensorId  String
+  sensor    Sensor   @relation(fields: [sensorId], references: [id], onDelete: Cascade)
+
+  bucket    DateTime /// Start of the hour (UTC)
+  min       Float
+  max       Float
+  avg       Float
+  count     Int
+
+  @@unique([sensorId, bucket])
+  @@map("sensor_log_hourly")
 }
 
 /* ---------------------------------------------------------

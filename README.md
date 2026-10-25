@@ -42,7 +42,23 @@ BCRYPT_SALT_ROUNDS=12
 
 # CORS Configuration (Next.js Frontend)
 CLIENT_URL="http://localhost:3000"
+
+# Redis Cache (local Docker; use the rediss:// Upstash URL in production)
+REDIS_URL="redis://localhost:6380"
+SOCKET_REDIS_ADAPTER=false
+LIVE_SENSOR_CACHE_FLUSH_SECONDS=300
 ```
+
+#### Redis & the Upstash free tier
+- **Local:** `docker compose up -d` starts Redis on `localhost:6380` (6379 is often taken by other projects).
+- **Socket.IO adapter:** `SOCKET_REDIS_ADAPTER=true` routes every socket emit through Redis `PUBLISH`. Only enable it when running more than one API instance; on a single instance it burns Upstash commands for nothing.
+- **Live sensor cache:** the simulation writes the latest values for each airport (`live:sensors:<CODE>`) to process memory on every tick, and to Redis only every `LIVE_SENSOR_CACHE_FLUSH_SECONDS`. Identical writes are skipped. `GET /api/v1/sensors/live?airportId=VVLT` reads memory first, then Redis, then Postgres.
+- Rough cost with defaults: ~1 write per airport every 5 min (~17K commands/month for 2 airports) plus cache misses for static data.
+
+#### Sensor history (datatable)
+- The simulation stores one raw sample per sensor per minute (`sensor_logs`) and keeps it for `SENSOR_RAW_RETENTION_HOURS` (default 48 h).
+- Every minute it refreshes hourly rollups (`sensor_log_hourly`: min / max / avg / sample count), kept for `SENSOR_ROLLUP_RETENTION_DAYS` (default 400 days). Roughly 100 MB for ~80 sensors over a year.
+- `GET /api/v1/sensors/:id/series?startDate=&endDate=&granularity=auto|raw|hour|day&tz=Asia/Ho_Chi_Minh` returns rows + summary for any period up to 400 days. `day` buckets follow local calendar days in `tz`; `auto` picks raw (≤ 6 h, inside the raw window), hourly (≤ 3 days) or daily.
 
 ---
 
@@ -106,6 +122,30 @@ Compiles TypeScript to JavaScript, resolves path aliases (`tsc-alias`), and runs
 npm run build
 npm run start
 ```
+
+### Docker / Deployment
+The multi-stage `Dockerfile` produces a slim, non-root runtime image (production dependencies + compiled `dist`, with the Prisma client generated for Debian). Migrations run from a separate `migrate` target, so the runtime image carries no Prisma CLI.
+
+```bash
+# Build and run (pass env vars from your platform, or a docker-format env file)
+docker build -t digital-twin-airport-api .
+docker run -p 5050:5050 -e DATABASE_URL=... -e CLIENT_URL=https://your-web.app -e REDIS_URL=rediss://...   -e JWT_SECRET=... -e JWT_REFRESH_SECRET=... digital-twin-airport-api
+
+# Apply pending migrations before (or after) deploying a new version
+docker build --target migrate -t digital-twin-airport-api-migrate .
+docker run --rm -e DATABASE_URL=... digital-twin-airport-api-migrate
+
+# Locally with Compose (reads .env; Redis included)
+docker compose --profile app up -d --build
+docker compose --profile migrate run --rm migrate
+```
+
+Deployment checklist:
+- **Required env:** `DATABASE_URL`, `CLIENT_URL` (comma-separated web origins, used for CORS + Socket.IO), `JWT_SECRET`, `JWT_REFRESH_SECRET`, `REDIS_URL`. The platform's `PORT` is honoured (default 5050).
+- **Supabase:** the direct host `db.<ref>.supabase.co` is IPv6-only. Containers and most PaaS (e.g. Render) have no IPv6 egress, so use the **Session pooler** connection string (`...pooler.supabase.com:5432`) as `DATABASE_URL`.
+- **Redis:** `REDIS_URL` with `rediss://` for Upstash; keep `SOCKET_REDIS_ADAPTER=false` unless you run several API instances.
+- **`docker run --env-file`** does not strip quotes or inline `# comments` from `.env` lines; use plain `KEY=value` files (Compose's `env_file` handles both).
+- **Health check:** `GET /health` (also wired as the image `HEALTHCHECK`).
 
 ---
 

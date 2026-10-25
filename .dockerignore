@@ -1,0 +1,25 @@
+# Never ship local secrets or machine-specific installs into the image
+.env
+.env.*
+!.env.example
+node_modules
+dist
+src/generated
+
+# Not needed to build or run the API
+.git
+.github
+.husky
+.vscode
+coverage
+*.log
+test
+plop-templates
+plopfile.js
+docker-compose.yml
+Dockerfile
+.dockerignore
+README.md
+
+# Design-time only: the IFC source is converted by scripts/ifc-to-glb.mjs into the web repo
+src/data/*.ifc

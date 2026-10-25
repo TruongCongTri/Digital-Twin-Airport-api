@@ -1,0 +1,46 @@
+# Local services.
+#   docker compose up -d                          -> Redis only (for `npm run dev`)
+#   docker compose --profile app up -d --build    -> Redis + the API container
+#   docker compose --profile migrate run --rm migrate   -> apply pending Prisma migrations
+# Redis is exposed on 6380 so it does not clash with other projects' Redis on 6379.
+# The API container needs an IPv4-reachable DATABASE_URL (Supabase: use the Session pooler URL).
+services:
+  redis:
+    image: redis:7.4-alpine
+    container_name: digital-twin-airport-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory', '256mb', '--maxmemory-policy', 'allkeys-lru']
+    ports:
+      - '127.0.0.1:6380:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  api:
+    profiles: ['app']
+    build: .
+    image: digital-twin-airport-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: '5050'
+      REDIS_URL: redis://redis:6379
+    ports:
+      - '127.0.0.1:5050:5050'
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  migrate:
+    profiles: ['migrate']
+    build:
+      context: .
+      target: migrate
+    env_file: .env
+
+volumes:
+  redis-data:

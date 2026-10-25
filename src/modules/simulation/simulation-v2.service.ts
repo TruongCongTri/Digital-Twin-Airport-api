@@ -9,6 +9,10 @@ import { FlightStatus, SensorType, VehicleStatus } from '@/generated/index';
 import { socketConfig } from '@/common/configs/socket';
 import { FlightService } from '../flight/flight.service';
 import { LONG_THANH_COORDS, TAN_SON_NHAT_COORDS } from '@/constants/airport-coordinates';
+import { GREEN_AIRPORT_COORDS } from '@/constants/green-airport-coordinates';
+import { env } from '@/common/configs/env';
+import redisClient from '@/common/services/redis.service';
+import { LIVE_SENSOR_CACHE_KEY } from '../sensor/sensor.service';
 
 export type ScenarioType =
   | 'NONE'
@@ -40,6 +44,32 @@ interface FlightSimState {
   gateLng: number;
 }
 
+// Per-airport routing: which route group a stand / vehicle uses
+const AIRPORT_ROUTING: Record<
+  string,
+  { routes: object; vehicleTerminalKey: string; terminalKeyForStand: (standCode: string) => string }
+> = {
+  VVTS: {
+    routes: TAN_SON_NHAT_COORDS.ROUTES,
+    vehicleTerminalKey: 'DOMESTIC',
+    terminalKeyForStand: (code) => (code.includes('INTL') ? 'INTERNATIONAL' : 'DOMESTIC'),
+  },
+  VVLT: {
+    routes: LONG_THANH_COORDS.ROUTES,
+    vehicleTerminalKey: 'T1',
+    terminalKeyForStand: (code) => (code.includes('T2') ? 'T2' : code.includes('T3') ? 'T3' : 'T1'),
+  },
+  [GREEN_AIRPORT_COORDS.CODE]: {
+    routes: GREEN_AIRPORT_COORDS.ROUTES,
+    vehicleTerminalKey: 'MAIN',
+    terminalKeyForStand: () => 'MAIN',
+  },
+};
+
+// Unknown airports fall back to Long Thanh routing (previous default behaviour)
+const getAirportRouting = (airportCode: string) =>
+  AIRPORT_ROUTING[airportCode] ?? AIRPORT_ROUTING.VVLT!;
+
 interface VehicleSimState {
   id: string;
   licensePlate: string;
@@ -62,6 +92,12 @@ export class SimulationService {
   private currentTick = 0;
   private readonly TICK_RATE_MS = 3000;
   private readonly DB_SAVE_TICK_MODULO = 20;
+  private readonly LIVE_CACHE_FLUSH_TICK_MODULO = Math.max(
+    1,
+    Math.round((env.LIVE_SENSOR_CACHE_FLUSH_SECONDS * 1000) / this.TICK_RATE_MS)
+  );
+  // Redis copy outlives a couple of missed flushes before expiring
+  private readonly LIVE_CACHE_TTL_SECONDS = env.LIVE_SENSOR_CACHE_FLUSH_SECONDS * 3;
 
   private sensorStates: Map<string, { value: number; type: SensorType; airportCode: string }> =
     new Map();
@@ -89,19 +125,12 @@ export class SimulationService {
 
   // ✅ Context-Aware Terminal Mapping
   private getTerminalRouteKey(airportCode: string, standCode: string): string {
-    if (airportCode === 'VVTS') {
-      return standCode.includes('INTL') ? 'INTERNATIONAL' : 'DOMESTIC';
-    }
-    // Default VVLT
-    if (standCode.includes('T2')) return 'T2';
-    if (standCode.includes('T3')) return 'T3';
-    return 'T1';
+    return getAirportRouting(airportCode).terminalKeyForStand(standCode);
   }
 
   // ✅ Context-Aware Coordinate Fetcher
   private getAirportRoutes(airportCode: string) {
-    if (airportCode === 'VVTS') return TAN_SON_NHAT_COORDS.ROUTES;
-    return LONG_THANH_COORDS.ROUTES;
+    return getAirportRouting(airportCode).routes;
   }
 
   public async start(): Promise<{ message: string }> {
@@ -215,7 +244,7 @@ export class SimulationService {
 
     groundVehicles.forEach((v: any) => {
       const airportCode = v.airport.code;
-      const terminalKey = airportCode === 'VVTS' ? 'DOMESTIC' : 'T1';
+      const terminalKey = getAirportRouting(airportCode).vehicleTerminalKey;
       const routes = this.getAirportRoutes(airportCode) as any;
       const taxiPath = (routes[terminalKey]?.taxiPath as { lat: number; lng: number }[]) || [];
 
@@ -409,10 +438,15 @@ export class SimulationService {
 
       if (this.currentTick % 5 === 0) this.simulateAIPredictions(io);
 
-      const dbUpdates = [];
+      const sensorIdsToSave: string[] = [];
+      const sensorValuesToSave: number[] = [];
       const logsToInsert = [];
 
       // --- SENSORS ---
+      // One batched emit per tick instead of one message per sensor
+      const sensorTelemetryBatch: { id: string; val: number }[] = [];
+      const liveSnapshots = new Map<string, Record<string, number>>();
+
       for (const [id, state] of this.sensorStates.entries()) {
         state.value = this.calculateNextValue(
           state.value,
@@ -420,15 +454,18 @@ export class SimulationService {
           loadMultiplier,
           solarMultiplier
         );
-        io.emit('sensor:telemetry', { id: id, val: state.value });
+        sensorTelemetryBatch.push({ id, val: state.value });
+
+        let snapshot = liveSnapshots.get(state.airportCode);
+        if (!snapshot) {
+          snapshot = {};
+          liveSnapshots.set(state.airportCode, snapshot);
+        }
+        snapshot[id] = state.value;
 
         if (isDbSaveTick) {
-          dbUpdates.push(
-            prisma.sensor.update({
-              where: { id },
-              data: { currentValue: state.value, lastReadAt: this.currentVirtualDate },
-            })
-          );
+          sensorIdsToSave.push(id);
+          sensorValuesToSave.push(state.value);
           logsToInsert.push({
             sensorId: id,
             value: state.value,
@@ -500,6 +537,7 @@ export class SimulationService {
       }
 
       // --- BATCH EMITS ---
+      if (sensorTelemetryBatch.length > 0) io.emit('sensors:telemetry:batch', sensorTelemetryBatch);
       if (flightTelemetryBatch.length > 0) io.emit('flights:telemetry:batch', flightTelemetryBatch);
       if (vehicleTelemetryBatch.length > 0)
         io.emit('vehicles:telemetry:batch', vehicleTelemetryBatch);
@@ -508,22 +546,81 @@ export class SimulationService {
         await this.manageATCAndPipeline();
       }
 
+      // --- LIVE SENSOR CACHE ---
+      // Memory every tick (0 Redis commands); Redis only every LIVE_SENSOR_CACHE_FLUSH_SECONDS
+      this.cacheLiveSensors(liveSnapshots);
+
       // --- DB FLUSH ---
       if (isDbSaveTick) {
         await prisma.$transaction([
-          ...dbUpdates,
+          // One bulk UPDATE for every sensor instead of one round trip per sensor,
+          // which kept the transaction under Prisma's 5s timeout on a remote DB
+          prisma.$executeRaw`
+            UPDATE "sensors" AS s
+            SET "currentValue" = v.val, "lastReadAt" = ${this.currentVirtualDate}, "updatedAt" = NOW()
+            FROM UNNEST(${sensorIdsToSave}::text[], ${sensorValuesToSave}::float8[]) AS v(id, val)
+            WHERE s."id" = v.id
+          `,
           prisma.sensorLog.createMany({ data: logsToInsert }),
           prisma.flightTelemetry.createMany({ data: flightLogsToInsert }),
           prisma.vehicleTelemetry.createMany({ data: vehicleLogsToInsert }),
         ]);
 
+        await this.rollupSensorHistory();
+
         const oneHourAgo = new Date(this.currentVirtualDate.getTime() - 60 * 60 * 1000);
         await prisma.flightTelemetry.deleteMany({ where: { timestamp: { lt: oneHourAgo } } });
         await prisma.vehicleTelemetry.deleteMany({ where: { timestamp: { lt: oneHourAgo } } });
-        await prisma.sensorLog.deleteMany({ where: { timestamp: { lt: oneHourAgo } } });
       }
     } catch (error) {
       console.error('[Simulation Engine] Critical Tick Error:', error);
+    }
+  }
+
+  /**
+   * Keeps sensor history queryable beyond the raw retention window: refreshes the
+   * hourly min/max/avg rollups for the current and previous hour from raw logs, then
+   * prunes raw logs (and, once an hour, rollups) past their retention.
+   */
+  private async rollupSensorHistory() {
+    const HOUR_MS = 60 * 60 * 1000;
+    const now = this.currentVirtualDate.getTime();
+    const fromHour = new Date(Math.floor(now / HOUR_MS) * HOUR_MS - HOUR_MS);
+
+    await prisma.$executeRaw`
+      INSERT INTO "sensor_log_hourly" ("id", "sensorId", "bucket", "min", "max", "avg", "count")
+      SELECT gen_random_uuid()::text, "sensorId", date_trunc('hour', "timestamp"),
+             MIN("value"), MAX("value"), AVG("value"), COUNT(*)::int
+      FROM "sensor_logs"
+      WHERE "timestamp" >= ${fromHour}
+      GROUP BY "sensorId", date_trunc('hour', "timestamp")
+      ON CONFLICT ("sensorId", "bucket") DO UPDATE
+      SET "min" = EXCLUDED."min", "max" = EXCLUDED."max", "avg" = EXCLUDED."avg", "count" = EXCLUDED."count"
+    `;
+
+    const rawCutoff = new Date(now - env.SENSOR_RAW_RETENTION_HOURS * HOUR_MS);
+    await prisma.sensorLog.deleteMany({ where: { timestamp: { lt: rawCutoff } } });
+
+    // Rollup pruning is cheap but only needs to run hourly
+    if (this.currentTick % (this.DB_SAVE_TICK_MODULO * 60) === 0) {
+      const rollupCutoff = new Date(now - env.SENSOR_ROLLUP_RETENTION_DAYS * 24 * HOUR_MS);
+      await prisma.sensorLogHourly.deleteMany({ where: { bucket: { lt: rollupCutoff } } });
+    }
+  }
+
+  private cacheLiveSensors(liveSnapshots: Map<string, Record<string, number>>) {
+    const isFlushTick = this.currentTick % this.LIVE_CACHE_FLUSH_TICK_MODULO === 0;
+    const updatedAt = this.currentVirtualDate.toISOString();
+
+    for (const [airportCode, values] of liveSnapshots.entries()) {
+      const key = LIVE_SENSOR_CACHE_KEY(airportCode);
+      const payload = JSON.stringify({ updatedAt, values });
+
+      if (isFlushTick) {
+        redisClient.setEx(key, this.LIVE_CACHE_TTL_SECONDS, payload).catch(() => undefined);
+      } else {
+        redisClient.setLocal(key, this.LIVE_CACHE_TTL_SECONDS, payload);
+      }
     }
   }
 
@@ -805,6 +902,7 @@ export class SimulationService {
 
   private simulateAIPredictions(io: any) {
     const forecastHorizons = [6, 12, 18, 24, 2190, 4380];
+    const predictionBatch = [];
     for (const [id, state] of this.sensorStates.entries()) {
       const predictions = forecastHorizons.map((horizonHours) => {
         const futureDate = new Date(
@@ -866,8 +964,10 @@ export class SimulationService {
           confidenceScore,
         };
       });
-      io.emit('ai:prediction:stream', { sensorId: id, type: state.type, predictions });
+      predictionBatch.push({ sensorId: id, type: state.type, predictions });
     }
+    // One batched emit instead of one message per sensor
+    if (predictionBatch.length > 0) io.emit('ai:predictions:batch', predictionBatch);
   }
 
   public triggerScenario(scenario: ScenarioType): { message: string } {

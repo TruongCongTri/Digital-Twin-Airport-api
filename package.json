@@ -16,6 +16,10 @@
     "db:status": "prisma migrate status",
     "db:studio": "prisma studio",
     "db:seed": "prisma db seed",
+    "db:seed:vvga": "tsx prisma/seed-green-airport.ts",
+    "db:update:vvlt-geometry": "tsx prisma/update-long-thanh-geometry.ts",
+    "osm:vvlt": "node scripts/osm-long-thanh.mjs",
+    "ifc:glb": "node scripts/ifc-to-glb.mjs src/data/Vietnam_Green_Airport_Coordination_Revit2024.ifc ../Digital-Twin-Airport-web/public/models/vvga",
     "generate": "plop",
     "postinstall": "npx prisma generate",
     "test": "echo \"Error: no test specified\" && exit 1"

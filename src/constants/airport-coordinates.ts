@@ -1,4 +1,11 @@
 // src/constants/airport-coordinates.ts
+import {
+  LONG_THANH_INDOOR_ANCHORS,
+  LONG_THANH_OUTDOOR_ANCHORS,
+  LONG_THANH_RUNWAYS,
+  LONG_THANH_STANDS,
+  LONG_THANH_TERMINAL_AREA,
+} from './long-thanh-osm';
 
 export const LONG_THANH_COORDS = {
   // 1. Core Infrastructure
@@ -7,50 +14,24 @@ export const LONG_THANH_COORDS = {
   ATC_TOWER: { lat: 10.777166637141557, lng: 107.04869528242126 },
   OUTER_GATE: { lat: 10.750674784003039, lng: 107.00907421492873 },
 
-  // 2. Terminal Polygons & Parking Lines
+  // 2. Terminal outline & aircraft stands (from OpenStreetMap, matching the 3D basemap terminal)
   TERMINALS: {
-    T1_RIGHT: {
-      parking: {
-        start: { lat: 10.775865210048106, lng: 107.04276367590793 },
-        end: { lat: 10.777973131582414, lng: 107.04343959253568 },
-      },
-    },
-    T2_CENTER: {
-      parking: {
-        start: { lat: 10.775116894353356, lng: 107.03930899092178 },
-        end: { lat: 10.7774145338134, lng: 107.03760310609943 },
-      },
-    },
-    T3_LEFT: {
-      parking: {
-        start: { lat: 10.772102533423862, lng: 107.03768893678232 },
-        end: { lat: 10.772070914093357, lng: 107.03527494882616 },
-      },
-    },
+    MAIN: { area: LONG_THANH_TERMINAL_AREA },
+    T1_RIGHT: { stands: LONG_THANH_STANDS.T1 },
+    T2_CENTER: { stands: LONG_THANH_STANDS.T2 },
+    T3_LEFT: { stands: LONG_THANH_STANDS.T3 },
   },
 
-  // 3. Runway Extremes & Areas
+  // 3. Runways (OpenStreetMap)
   RUNWAYS: {
-    RWY_25L_07R: {
-      start: { lat: 10.823710041593795, lng: 106.66951193619475 },
-      end: { lat: 10.813930798546425, lng: 106.64368852426568 },
-      area: [
-        { lat: 10.823400428109272, lng: 106.66964385536427 },
-        { lat: 10.823912510565854, lng: 106.66944490395991 },
-        { lat: 10.814047696505979, lng: 106.64332089250544 },
-        { lat: 10.81366318323904, lng: 106.6434657051963 },
-      ],
-    },
-    RWY_25R_07L: {
-      start: { lat: 10.82484820416058, lng: 106.66313686190618 },
-      end: { lat: 10.815030986427335, lng: 106.63710841832535 },
-      area: [
-        { lat: 10.824660250230387, lng: 106.66324061492145 },
-        { lat: 10.825058134114984, lng: 106.66307315556871 },
-        { lat: 10.815219665467167, lng: 106.63704357564868 },
-        { lat: 10.81483461780666, lng: 106.63718689965292 },
-      ],
-    },
+    RWY_05R_23L: LONG_THANH_RUNWAYS['05R/23L'],
+    RWY_05L_23R: LONG_THANH_RUNWAYS['05L/23R'],
+  },
+
+  // Sensor mounting points: inside the terminal hall / beside the runway and on the apron
+  SENSOR_ANCHORS: {
+    INDOOR: LONG_THANH_INDOOR_ANCHORS,
+    OUTDOOR: LONG_THANH_OUTDOOR_ANCHORS,
   },
 
   // 4. Ground Taxiways & Flight Paths
