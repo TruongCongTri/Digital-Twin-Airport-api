@@ -8,7 +8,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
-import { env } from './common/configs/env';
+import { CLIENT_ORIGINS } from './common/configs/env';
 import { errorHandler } from './middlewares/error-handler.middleware';
 import { API_VERSION } from './constants/endpoints';
 import v1Router from './routes/v1';
@@ -29,15 +29,23 @@ app.set('trust proxy', 1);
  */
 app.use(helmet());
 
-const whitelist = env.CLIENT_URL.split(',');
+const rejectedOrigins = new Set<string>();
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin || whitelist.indexOf(origin) !== -1) {
+      if (!origin || CLIENT_ORIGINS.includes(origin)) {
         callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
+        return;
       }
+      // Answer without CORS headers (the browser blocks it) instead of throwing a 500,
+      // and log each unknown origin once so a CLIENT_URL mismatch is easy to spot
+      if (!rejectedOrigins.has(origin)) {
+        rejectedOrigins.add(origin);
+        console.warn(
+          `[CORS] Blocked origin ${origin}. Allowed (CLIENT_URL): ${CLIENT_ORIGINS.join(', ')}`
+        );
+      }
+      callback(null, false);
     },
     credentials: true, // Allow cookies to be sent in CORS requests
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],

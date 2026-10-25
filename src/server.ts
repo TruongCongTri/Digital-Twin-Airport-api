@@ -3,7 +3,7 @@
  * @description Application bootstrap with global error trapping.
  */
 import { prisma } from './common/configs/prisma';
-import { env } from './common/configs/env';
+import { CLIENT_ORIGINS, env } from './common/configs/env';
 import app from './app';
 
 import { createServer } from 'http';
@@ -40,7 +40,7 @@ const startServer = async () => {
     let pubClient: ReturnType<typeof createClient> | null = null;
     let subClient: ReturnType<typeof createClient> | null = null;
     const socketOptions: Partial<ServerOptions> = {
-      cors: { origin: env.CLIENT_URL.split(','), credentials: true },
+      cors: { origin: CLIENT_ORIGINS, credentials: true },
     };
 
     if (env.SOCKET_REDIS_ADAPTER) {

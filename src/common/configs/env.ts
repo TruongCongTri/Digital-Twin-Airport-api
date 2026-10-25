@@ -19,7 +19,14 @@ const envSchema = z.object({
   REDIS_URL: z
     .string()
     .min(1, MESSAGES.SERVER.CONFIGURE(FIELDS.REDIS))
-    .default('redis://localhost:6380'), // Local Docker Redis (see docker-compose.yml)
+    .default('redis://localhost:6380') // Local Docker Redis (see docker-compose.yml)
+    // Upstash only accepts TLS: a plain redis:// URL connects and is closed straight away
+    // ("Socket closed unexpectedly"), so upgrade it to rediss://
+    .transform((url) =>
+      /^redis:\/\/[^/]*\.upstash\.io(:\d+)?(\/|$)/.test(url)
+        ? url.replace(/^redis:/, 'rediss:')
+        : url
+    ),
   // Socket.IO Redis adapter: only needed when running MORE THAN ONE API instance.
   // When enabled, every socket emit becomes a Redis PUBLISH (expensive on Upstash free tier).
   SOCKET_REDIS_ADAPTER: z
@@ -57,3 +64,19 @@ if (!envParsed.success) {
  * @description Immutable, validated environment configuration object.
  */
 export const env = envParsed.data;
+
+/**
+ * Allowed browser origins parsed from the comma-separated CLIENT_URL. Entries are trimmed and
+ * reduced to their origin, so "https://app.vercel.app/" or ", https://x.com" still match the
+ * browser's Origin header (scheme + host + port, no path or trailing slash).
+ */
+export const CLIENT_ORIGINS = env.CLIENT_URL.split(',')
+  .map((url) => url.trim())
+  .filter(Boolean)
+  .map((url) => {
+    try {
+      return new URL(url).origin;
+    } catch {
+      return url.replace(/\/+$/, '');
+    }
+  });
