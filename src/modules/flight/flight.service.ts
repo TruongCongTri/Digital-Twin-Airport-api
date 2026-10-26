@@ -17,12 +17,59 @@ import { socketConfig } from '@/common/configs/socket';
 import { FlightStatus } from '@/generated/client';
 import { PaginationMetaDto } from '@/data/dtos/pagination.dto';
 import redisClient from '@/common/services/redis.service';
+import { prisma } from '@/common/configs/prisma';
+import { getAirspaceAnchor, isOffAirport } from '@/constants/airport-routing';
+
+const AIRPORT_CODE_TTL_MS = 5 * 60 * 1000;
 
 export class FlightService {
   private readonly flightRepository: FlightRepository;
 
+  private airportCodes: { map: Map<string, string>; loadedAt: number } | null = null;
+
   constructor() {
     this.flightRepository = new FlightRepository();
+  }
+
+  // airportId -> code (airports only change on a re-seed, so a short memo is enough)
+  private async getAirportCodes() {
+    if (!this.airportCodes || Date.now() - this.airportCodes.loadedAt > AIRPORT_CODE_TTL_MS) {
+      const airports = await prisma.airport.findMany({ select: { id: true, code: true } });
+      this.airportCodes = {
+        map: new Map(airports.map((a) => [a.id, a.code])),
+        loadedAt: Date.now(),
+      };
+    }
+    return this.airportCodes.map;
+  }
+
+  /**
+   * Adds where the flight is: `onAirport` is false while it is in the air or not yet
+   * arrived, and `anchor` is the point inside the airport the map pins it to instead.
+   */
+  private async withLocation<T extends { airportId: string; status: FlightStatus }>(flights: T[]) {
+    const codes = await this.getAirportCodes();
+    return flights.map((f) => {
+      const onAirport = !isOffAirport(f.status);
+      const code = codes.get(f.airportId);
+      return {
+        ...f,
+        onAirport,
+        anchor: !onAirport && code ? getAirspaceAnchor(code, f.status) : null,
+      };
+    });
+  }
+
+  /**
+   * @method broadcastStatus
+   * @description Emits `flight:status-changed` with the flight's current row (stand + location),
+   * for status changes made outside updateStatus (e.g. by the simulation's ATC pipeline).
+   */
+  public async broadcastStatus(id: string) {
+    const flight = await this.flightRepository.findByIdWithDetails(id);
+    if (!flight) return;
+    const [view] = await this.withLocation([flight]);
+    socketConfig.getIO().emit('flight:status-changed', view);
   }
 
   /**
@@ -81,7 +128,7 @@ export class FlightService {
   public async getAll(query: GetFlightsQuery) {
     const { total, data } = await this.flightRepository.findManyWithPagination(query);
     const meta = PaginationMetaDto.create(query.page, query.limit, total);
-    return { data, meta };
+    return { data: await this.withLocation(data), meta };
   }
 
   /**
@@ -91,7 +138,7 @@ export class FlightService {
   public async getActive(query: GetFlightsQuery) {
     const { total, data } = await this.flightRepository.findActiveFlights(query);
     const meta = PaginationMetaDto.create(query.page, query.limit, total);
-    return { data, meta };
+    return { data: await this.withLocation(data), meta };
   }
 
   /**
@@ -101,7 +148,7 @@ export class FlightService {
   public async getDetail(id: string) {
     const flight = await this.flightRepository.findByIdWithDetails(id);
     if (!flight) throw new AppError(404, 'Flight not found');
-    return flight;
+    return (await this.withLocation([flight]))[0]!;
   }
 
   /**
@@ -162,8 +209,8 @@ export class FlightService {
 
     const updated = await this.flightRepository.update(id, updatePayload);
 
-    // 5. BROADCAST EVENT
-    socketConfig.getIO().emit('flight:status-changed', updated);
+    // 5. BROADCAST EVENT (with stand + location, same shape as the REST list)
+    await this.broadcastStatus(id);
 
     return updated;
   }

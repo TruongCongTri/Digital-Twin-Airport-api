@@ -8,8 +8,7 @@ import { prisma } from '@/common/configs/prisma';
 import { FlightStatus, SensorType, VehicleStatus } from '@/generated/index';
 import { socketConfig } from '@/common/configs/socket';
 import { FlightService } from '../flight/flight.service';
-import { LONG_THANH_COORDS, TAN_SON_NHAT_COORDS } from '@/constants/airport-coordinates';
-import { GREEN_AIRPORT_COORDS } from '@/constants/green-airport-coordinates';
+import { getAirportRouting } from '@/constants/airport-routing';
 import { env } from '@/common/configs/env';
 import redisClient from '@/common/services/redis.service';
 import { LIVE_SENSOR_CACHE_KEY } from '../sensor/sensor.service';
@@ -44,31 +43,8 @@ interface FlightSimState {
   gateLng: number;
 }
 
-// Per-airport routing: which route group a stand / vehicle uses
-const AIRPORT_ROUTING: Record<
-  string,
-  { routes: object; vehicleTerminalKey: string; terminalKeyForStand: (standCode: string) => string }
-> = {
-  VVTS: {
-    routes: TAN_SON_NHAT_COORDS.ROUTES,
-    vehicleTerminalKey: 'DOMESTIC',
-    terminalKeyForStand: (code) => (code.includes('INTL') ? 'INTERNATIONAL' : 'DOMESTIC'),
-  },
-  VVLT: {
-    routes: LONG_THANH_COORDS.ROUTES,
-    vehicleTerminalKey: 'T1',
-    terminalKeyForStand: (code) => (code.includes('T2') ? 'T2' : code.includes('T3') ? 'T3' : 'T1'),
-  },
-  [GREEN_AIRPORT_COORDS.CODE]: {
-    routes: GREEN_AIRPORT_COORDS.ROUTES,
-    vehicleTerminalKey: 'MAIN',
-    terminalKeyForStand: () => 'MAIN',
-  },
-};
-
-// Unknown airports fall back to Long Thanh routing (previous default behaviour)
-const getAirportRouting = (airportCode: string) =>
-  AIRPORT_ROUTING[airportCode] ?? AIRPORT_ROUTING.VVLT!;
+// Inactive flights the ATC pipeline may bring back in (CANCELLED / DIVERTED stay as they are)
+const RECYCLABLE_STATUSES: FlightStatus[] = ['SCHEDULED', 'DELAYED', 'DEPARTED'];
 
 interface VehicleSimState {
   id: string;
@@ -166,7 +142,7 @@ export class SimulationService {
       const airportCode = f.airport.code;
       const isAtGate = f.status === 'PARKED' || f.status === 'PUSHBACK';
       const terminalKey = this.getTerminalRouteKey(airportCode, f.parkingStand?.code || '');
-      const routes = this.getAirportRoutes(airportCode) as any;
+      const routes = this.getAirportRoutes(airportCode);
       const routePaths = routes[terminalKey];
 
       if (!routePaths) return;
@@ -177,8 +153,8 @@ export class SimulationService {
 
       if (!activeRoute || activeRoute.length === 0) return;
 
-      const firstPoint = activeRoute[0];
-      const lastPoint = activeRoute[activeRoute.length - 1];
+      const firstPoint = activeRoute[0]!;
+      const lastPoint = activeRoute[activeRoute.length - 1]!;
 
       const gateLat = f.parkingStand?.y ?? lastPoint.lat;
       const gateLng = f.parkingStand?.x ?? lastPoint.lng;
@@ -207,6 +183,7 @@ export class SimulationService {
               where: { id: f.id },
               data: { status: f.status as FlightStatus, direction: newDirection },
             })
+            .then(() => this.flightService.broadcastStatus(f.id))
             .catch(console.error);
         }
       }
@@ -245,7 +222,7 @@ export class SimulationService {
     groundVehicles.forEach((v: any) => {
       const airportCode = v.airport.code;
       const terminalKey = getAirportRouting(airportCode).vehicleTerminalKey;
-      const routes = this.getAirportRoutes(airportCode) as any;
+      const routes = this.getAirportRoutes(airportCode);
       const taxiPath = (routes[terminalKey]?.taxiPath as { lat: number; lng: number }[]) || [];
 
       const firstWaypoint = taxiPath[0];
@@ -327,10 +304,8 @@ export class SimulationService {
   public async triggerFlightInbound(airportCode: string): Promise<{ message: string }> {
     // Find an inactive flight that belongs to this airport
     const recycledFlight = await prisma.flight.findFirst({
-      where: {
-        airport: { code: airportCode },
-        status: { notIn: ['LANDED', 'TAXIING', 'PARKED', 'PUSHBACK', 'APPROACHING'] },
-      },
+      where: { airport: { code: airportCode }, status: { in: RECYCLABLE_STATUSES } },
+      orderBy: { updatedAt: 'asc' },
       include: { airport: true },
     });
 
@@ -361,6 +336,7 @@ export class SimulationService {
       where: { id: recycledFlight.id },
       data: { status: 'APPROACHING', direction: 'INBOUND', parkingStandId: newStand.id },
     });
+    await this.flightService.broadcastStatus(recycledFlight.id);
 
     return {
       message: `Flight ${recycledFlight.flightNumber} triggered INBOUND to ${newStand.code}.`,
@@ -624,43 +600,56 @@ export class SimulationService {
     }
   }
 
+  // Each airport runs its own pipeline: a global count let the busiest airport hold the
+  // shared quota and findFirst always served the same airport, so VVGA never recycled.
   private async manageATCAndPipeline() {
-    const approachingCount = await prisma.flight.count({ where: { status: 'APPROACHING' } });
+    const airports = await prisma.airport.findMany({ select: { id: true, code: true } });
+    for (const airport of airports) {
+      await this.manageAirportPipeline(airport.id, airport.code);
+    }
+  }
+
+  private async manageAirportPipeline(airportId: string, airportCode: string) {
+    const allStands = await prisma.parkingStand.findMany({ where: { zone: { airportId } } });
+    if (allStands.length === 0) return;
+
+    const approachingCount = await prisma.flight.count({
+      where: { airportId, status: 'APPROACHING' },
+    });
     let parkedCount = 0;
     this.flightStates.forEach((f) => {
-      if (f.status === 'PARKED' || f.status === 'PUSHBACK') parkedCount++;
+      if (f.airportCode === airportCode && (f.status === 'PARKED' || f.status === 'PUSHBACK'))
+        parkedCount++;
     });
 
-    if (approachingCount + parkedCount < 10) {
+    // Keep about 3/4 of the stands busy (parked + inbound); below half, flights appear parked
+    const busyTarget = Math.max(2, Math.ceil(allStands.length * 0.75));
+    const parkDirectlyBelow = Math.ceil(allStands.length / 2);
+
+    if (approachingCount + parkedCount < busyTarget) {
+      // Oldest first, so every idle flight gets its turn
       const recycledFlight = await prisma.flight.findFirst({
-        where: { status: { notIn: ['LANDED', 'TAXIING', 'PARKED', 'PUSHBACK', 'APPROACHING'] } },
-        include: { airport: true },
+        where: { airportId, status: { in: RECYCLABLE_STATUSES } },
+        orderBy: { updatedAt: 'asc' },
       });
 
       if (recycledFlight && !this.flightStates.has(recycledFlight.id)) {
         const activeFlights = await prisma.flight.findMany({
           where: {
             status: { in: ['APPROACHING', 'LANDED', 'TAXIING', 'PARKED', 'PUSHBACK'] },
-            airportId: recycledFlight.airportId,
+            airportId,
           },
         });
         const usedStands = new Set(activeFlights.map((f) => f.parkingStandId).filter(Boolean));
-        const allStands = await prisma.parkingStand.findMany({
-          where: { zone: { airportId: recycledFlight.airportId } },
-        });
         const freeStands = allStands.filter((s) => !usedStands.has(s.id));
+        const newStand = freeStands[Math.floor(Math.random() * freeStands.length)];
 
-        if (freeStands.length > 0) {
-          const newStand = freeStands[Math.floor(Math.random() * freeStands.length)];
+        if (newStand) {
+          const terminalKey = this.getTerminalRouteKey(airportCode, newStand.code);
 
-          if (!newStand) return;
-
-          const terminalKey = this.getTerminalRouteKey(recycledFlight.airport.code, newStand.code);
-
-          if (parkedCount < 6) {
-            const routes = this.getAirportRoutes(recycledFlight.airport.code) as any;
-            const routePaths = routes[terminalKey];
-            const gateSpot = routePaths.flightInbound[routePaths.flightInbound.length - 1];
+          if (parkedCount < parkDirectlyBelow) {
+            const routePaths = this.getAirportRoutes(airportCode)[terminalKey];
+            const gateSpot = routePaths?.flightInbound[routePaths.flightInbound.length - 1];
 
             if (gateSpot) {
               this.flightStates.set(recycledFlight.id, {
@@ -679,7 +668,7 @@ export class SimulationService {
                 currentWaypointIndex: 0,
                 destinationType: 'TERMINAL',
                 terminalKey: terminalKey,
-                airportCode: recycledFlight.airport.code,
+                airportCode,
                 gateLat: newStand.y,
                 gateLng: newStand.x,
               });
@@ -688,66 +677,66 @@ export class SimulationService {
                 where: { id: recycledFlight.id },
                 data: { status: 'PARKED', direction: 'TURNAROUND', parkingStandId: newStand.id },
               });
+              await this.flightService.broadcastStatus(recycledFlight.id);
             }
           } else {
             await prisma.flight.update({
               where: { id: recycledFlight.id },
               data: { status: 'APPROACHING', direction: 'INBOUND', parkingStandId: newStand.id },
             });
+            await this.flightService.broadcastStatus(recycledFlight.id);
           }
         }
       }
     }
 
-    // Process approaching flights sequentially per airport
+    // Land the longest-waiting approaching flight once this airport's inbound route is free
+    const lockKey = `${airportCode}_INBOUND`;
+    if (this.reservedRoutes.has(lockKey)) return;
+
     const approachingFlight = await prisma.flight.findFirst({
-      where: { status: 'APPROACHING' },
-      include: { parkingStand: true, airport: true },
+      where: { airportId, status: 'APPROACHING', id: { notIn: [...this.flightStates.keys()] } },
+      orderBy: { updatedAt: 'asc' },
+      include: { parkingStand: true },
+    });
+    if (!approachingFlight) return;
+
+    const terminalKey = this.getTerminalRouteKey(
+      airportCode,
+      approachingFlight.parkingStand?.code || ''
+    );
+    const route = this.getAirportRoutes(airportCode)[terminalKey]?.flightInbound ?? [];
+    const landingSpot = route[0];
+    if (!landingSpot) return;
+
+    this.reservedRoutes.add(lockKey);
+    this.flightStates.set(approachingFlight.id, {
+      id: approachingFlight.id,
+      flightNumber: approachingFlight.flightNumber,
+      status: 'LANDED',
+      direction: 'INBOUND',
+      assignedRunway: 'RWY_05L',
+      lat: landingSpot.lat,
+      lng: landingSpot.lng,
+      alt: 50,
+      speed: 55,
+      heading: 0,
+      ticksInState: 0,
+      route: route,
+      currentWaypointIndex: 1,
+      destinationType: 'TERMINAL',
+      activeRouteId: lockKey,
+      terminalKey: terminalKey,
+      airportCode,
+      gateLat: approachingFlight.parkingStand?.y || 0,
+      gateLng: approachingFlight.parkingStand?.x || 0,
     });
 
-    if (approachingFlight && !this.flightStates.has(approachingFlight.id)) {
-      const lockKey = `${approachingFlight.airport.code}_INBOUND`;
-      if (!this.reservedRoutes.has(lockKey)) {
-        this.reservedRoutes.add(lockKey);
-
-        const terminalKey = this.getTerminalRouteKey(
-          approachingFlight.airport.code,
-          approachingFlight.parkingStand?.code || ''
-        );
-        const routes = this.getAirportRoutes(approachingFlight.airport.code) as any;
-        const route = routes[terminalKey].flightInbound;
-        const landingSpot = route[0];
-
-        if (landingSpot) {
-          this.flightStates.set(approachingFlight.id, {
-            id: approachingFlight.id,
-            flightNumber: approachingFlight.flightNumber,
-            status: 'LANDED',
-            direction: 'INBOUND',
-            assignedRunway: 'RWY_05L',
-            lat: landingSpot.lat,
-            lng: landingSpot.lng,
-            alt: 50,
-            speed: 55,
-            heading: 0,
-            ticksInState: 0,
-            route: route,
-            currentWaypointIndex: 1,
-            destinationType: 'TERMINAL',
-            activeRouteId: lockKey,
-            terminalKey: terminalKey,
-            airportCode: approachingFlight.airport.code,
-            gateLat: approachingFlight.parkingStand?.y || 0,
-            gateLng: approachingFlight.parkingStand?.x || 0,
-          });
-
-          await prisma.flight.update({
-            where: { id: approachingFlight.id },
-            data: { status: 'LANDED', direction: 'INBOUND' },
-          });
-        }
-      }
-    }
+    await prisma.flight.update({
+      where: { id: approachingFlight.id },
+      data: { status: 'LANDED', direction: 'INBOUND' },
+    });
+    await this.flightService.broadcastStatus(approachingFlight.id);
   }
 
   private evaluateFlightStateTransition(flight: FlightSimState) {
@@ -786,8 +775,8 @@ export class SimulationService {
       flight.direction = 'OUTBOUND';
       this.changeFlightStatus(flight, 'TAXIING', 20);
       flight.destinationType = 'RUNWAY';
-      const routes = this.getAirportRoutes(flight.airportCode) as any;
-      flight.route = routes[flight.terminalKey].flightOutbound;
+      const routes = this.getAirportRoutes(flight.airportCode);
+      flight.route = routes[flight.terminalKey]?.flightOutbound ?? [];
       flight.currentWaypointIndex = 1;
     }
 
@@ -798,6 +787,9 @@ export class SimulationService {
           flight.activeRouteId = undefined;
         }
         this.flightService.updateStatus(flight.id, { status: 'DEPARTED' }).catch(console.error);
+        // This tick's telemetry frame reports the departure before the flight leaves the live set
+        flight.status = 'DEPARTED';
+        flight.speed = 0;
         this.flightStates.delete(flight.id);
       }
     }

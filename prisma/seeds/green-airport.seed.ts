@@ -22,8 +22,34 @@ import {
 
 const COORDS = GREEN_AIRPORT_COORDS;
 const STAND_COUNT = 6;
-const PARKED_FLIGHTS = 4;
-const QUEUED_FLIGHTS = 4;
+
+type FlightDirection = 'INBOUND' | 'OUTBOUND' | 'TURNAROUND';
+type FlightSeed = {
+  status: FlightStatus;
+  direction: FlightDirection;
+  route: [string, string]; // [origin, destination]
+  stand?: number; // index into the stands; on-airport flights only
+};
+
+// A mixed board like VVTS / VVLT: aircraft at the gates, one taxiing in, one on approach,
+// plus queued, delayed, departed and disrupted flights for the ATC pipeline to cycle.
+const FLIGHT_BOARD: FlightSeed[] = [
+  { status: FlightStatus.PARKED, direction: 'TURNAROUND', route: ['SGN', 'VGA'], stand: 0 },
+  { status: FlightStatus.PARKED, direction: 'TURNAROUND', route: ['ICN', 'VGA'], stand: 1 },
+  { status: FlightStatus.PARKED, direction: 'TURNAROUND', route: ['DAD', 'VGA'], stand: 2 },
+  { status: FlightStatus.PARKED, direction: 'TURNAROUND', route: ['SIN', 'VGA'], stand: 3 },
+  { status: FlightStatus.TAXIING, direction: 'INBOUND', route: ['NRT', 'VGA'], stand: 4 },
+  { status: FlightStatus.APPROACHING, direction: 'INBOUND', route: ['BKK', 'VGA'], stand: 5 },
+  { status: FlightStatus.SCHEDULED, direction: 'INBOUND', route: ['PQC', 'VGA'] },
+  { status: FlightStatus.SCHEDULED, direction: 'INBOUND', route: ['TPE', 'VGA'] },
+  { status: FlightStatus.SCHEDULED, direction: 'INBOUND', route: ['CXR', 'VGA'] },
+  { status: FlightStatus.DELAYED, direction: 'INBOUND', route: ['HKG', 'VGA'] },
+  { status: FlightStatus.DELAYED, direction: 'INBOUND', route: ['KUL', 'VGA'] },
+  { status: FlightStatus.DEPARTED, direction: 'OUTBOUND', route: ['VGA', 'DXB'] },
+  { status: FlightStatus.DEPARTED, direction: 'OUTBOUND', route: ['VGA', 'SGN'] },
+  { status: FlightStatus.CANCELLED, direction: 'INBOUND', route: ['HKT', 'VGA'] },
+  { status: FlightStatus.DIVERTED, direction: 'INBOUND', route: ['CTS', 'VGA'] },
+];
 
 export async function seedGreenAirport() {
   console.log(`--- Seeding ${COORDS.NAME} (${COORDS.CODE}) ---`);
@@ -59,14 +85,14 @@ export async function seedGreenAirport() {
 
   // 2. PARKING STANDS (along the airside face of the terminal)
   const parkingLine = COORDS.TERMINALS.MAIN.parking;
-  const stands = [];
+  const stands: { id: string }[] = [];
   for (let i = 0; i < STAND_COUNT; i++) {
     const coord = lerp(parkingLine.start, parkingLine.end, i / (STAND_COUNT - 1));
     stands.push(
       await prisma.parkingStand.create({
         data: {
           code: `VGA-MAIN-G${i + 1}`,
-          isOccupied: i < PARKED_FLIGHTS,
+          isOccupied: FLIGHT_BOARD.some((f) => f.stand === i),
           zoneId: apron.id,
           z: 0,
           x: coord.lng,
@@ -147,25 +173,22 @@ export async function seedGreenAirport() {
 
   await prisma.sensor.createMany({ data: sensorsData });
 
-  // 4. FLIGHTS (parked at the first stands, the rest queued for the ATC pipeline)
-  const ORIGINS = ['SGN', 'DAD', 'ICN', 'SIN', 'BKK', 'NRT', 'CXR', 'PQC'];
-  const flightsData: any[] = [];
-  for (let i = 0; i < PARKED_FLIGHTS + QUEUED_FLIGHTS; i++) {
+  // 4. FLIGHTS (every airline, a mix of on-airport and off-airport statuses)
+  const flightsData = FLIGHT_BOARD.map((f, i) => {
     const airline = AIRLINES[(i + 1) % AIRLINES.length]!;
-    const isParked = i < PARKED_FLIGHTS;
-    flightsData.push({
+    return {
       flightNumber: `${airline.code}${600 + i}`,
       airline: airline.name,
-      origin: ORIGINS[i % ORIGINS.length],
-      destination: 'VGA',
+      origin: f.route[0],
+      destination: f.route[1],
       airportId: airport.id,
-      status: isParked ? FlightStatus.PARKED : FlightStatus.SCHEDULED,
-      direction: 'TURNAROUND',
-      parkingStandId: isParked ? stands[i]!.id : null,
-      imageUrl: PLANE_IMAGE_MAP[airline.code],
-      logoUrl: AIRLINE_IMAGE_MAP[airline.code],
-    });
-  }
+      status: f.status,
+      direction: f.direction,
+      parkingStandId: f.stand !== undefined ? stands[f.stand]!.id : null,
+      imageUrl: PLANE_IMAGE_MAP[airline.code] ?? null,
+      logoUrl: AIRLINE_IMAGE_MAP[airline.code] ?? null,
+    };
+  });
   await prisma.flight.createMany({ data: flightsData });
 
   // 5. GROUND VEHICLES (landside curb loop)
