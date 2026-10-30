@@ -225,10 +225,12 @@ export async function seedGreenAirport() {
 }
 
 /**
- * @description Removes only VVGA rows, so it can be re-seeded without touching other airports.
+ * @description Removes one airport's rows, so it can be re-seeded without touching the others.
  */
-export async function removeGreenAirport() {
-  const airport = await prisma.airport.findUnique({ where: { code: COORDS.CODE } });
+export const removeGreenAirport = () => removeAirportByCode(COORDS.CODE);
+
+export async function removeAirportByCode(code: string) {
+  const airport = await prisma.airport.findUnique({ where: { code } });
   if (!airport) return;
 
   const airportId = airport.id;

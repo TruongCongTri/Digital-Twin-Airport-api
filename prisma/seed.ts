@@ -1,6 +1,6 @@
 /**
  * @file prisma/seed.ts
- * @description Populates the database with Multi-Airport configurations (VVLT, VVTS & VVGA).
+ * @description Populates the database with Multi-Airport configurations (VVLT, VVTS, VVGA & VVNG).
  */
 import { 
   ZoneType, 
@@ -21,6 +21,7 @@ import {
   OUTDOOR_SENSOR_TYPES,
 } from './seeds/shared';
 import { seedGreenAirport } from './seeds/green-airport.seed';
+import { seedNhaGa } from './seeds/nha-ga.seed';
 
 async function seedTanSonNhat() {
   console.log('--- Seeding Tan Son Nhat (VVTS) ---');
@@ -326,6 +327,7 @@ async function main() {
   await seedTanSonNhat();
   await seedLongThanh();
   await seedGreenAirport();
+  await seedNhaGa();
 
   console.log('✅ Multi-Tenant Seeding completed successfully!');
 }

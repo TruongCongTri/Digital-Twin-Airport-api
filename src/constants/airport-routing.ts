@@ -6,6 +6,7 @@
 import { FlightStatus } from '@/generated/index';
 import { LONG_THANH_COORDS, TAN_SON_NHAT_COORDS } from './airport-coordinates';
 import { GREEN_AIRPORT_COORDS } from './green-airport-coordinates';
+import { NHA_GA_COORDS } from './nha-ga-coordinates';
 
 type LatLng = { lat: number; lng: number };
 type RouteGroup = { taxiPath: LatLng[]; flightInbound: LatLng[]; flightOutbound: LatLng[] };
@@ -33,6 +34,11 @@ export const AIRPORT_ROUTING: Record<
     routes: GREEN_AIRPORT_COORDS.ROUTES,
     vehicleTerminalKey: 'MAIN',
     terminalKeyForStand: () => 'MAIN',
+  },
+  [NHA_GA_COORDS.CODE]: {
+    routes: NHA_GA_COORDS.ROUTES,
+    vehicleTerminalKey: 'WEST',
+    terminalKeyForStand: (code) => (code.includes('EAST') ? 'EAST' : 'WEST'),
   },
 };
 
