@@ -9,8 +9,8 @@
  * It has no interior spaces and no runway, so the pads serve as aircraft stands and the
  * runway + taxiway below are procedural, as at VVGA.
  *
- * The IFC site location is Revit's default (Boston), so ORIGIN and HEADING_DEG are a
- * PLACEHOLDER placement in northern Vietnam. Every coordinate below is derived from local
+ * The IFC site location is Revit's default (Boston), so ORIGIN is a PLACEHOLDER placement
+ * in northern Vietnam. Every coordinate below is derived from local
  * metres, so moving the site only requires changing those two values.
  *
  * IFC local frame: +X = long axis of the roads, +Y = airside (pads), -Y = landside (plaza).
@@ -18,8 +18,9 @@
 type LatLng = { lat: number; lng: number };
 
 const ORIGIN: LatLng = { lat: 21.0, lng: 106.1 };
-// Bearing (degrees clockwise from north) of the IFC +X axis
-const HEADING_DEG = 68;
+// Bearing (degrees clockwise from north) of the IFC +X axis: the file's TrueNorth is (0, 1),
+// so +Y is north and +X is east
+const HEADING_DEG = 90;
 
 const METRES_PER_DEG_LAT = 111_320;
 const toGeo = (x: number, y: number): LatLng => {
@@ -114,7 +115,7 @@ export const NHA_GA_COORDS = {
     },
   },
 
-  // 4. Ground Taxiways & Flight Paths (landing / take-off towards 068°)
+  // 4. Ground Taxiways & Flight Paths (landing / take-off towards 090°)
   ROUTES: {
     WEST: {
       taxiPath,

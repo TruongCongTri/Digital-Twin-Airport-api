@@ -16,8 +16,10 @@
 type LatLng = { lat: number; lng: number };
 
 const ORIGIN: LatLng = { lat: 21.049198921684162, lng: 106.19836335382935 };
-// Bearing (degrees clockwise from north) of the IFC +X axis — runways 07/25
-const HEADING_DEG = 68;
+// Bearing (degrees clockwise from north) of the IFC +X axis: 71.09° is the mean of the long
+// edges (6.2 km) of the Gia Bình construction boundary in OpenStreetMap (ways 1524509518,
+// 1545869239), so the terminal and runways run with the real site
+const HEADING_DEG = 71;
 
 const METRES_PER_DEG_LAT = 111_320;
 const toGeo = (x: number, y: number): LatLng => {
@@ -95,7 +97,7 @@ export const GREEN_AIRPORT_COORDS = {
     },
   },
 
-  // 4. Ground Taxiways & Flight Paths (northern runway, landing/take-off towards 068°)
+  // 4. Ground Taxiways & Flight Paths (northern runway, landing/take-off towards 071°)
   ROUTES: {
     MAIN: {
       // Landside curb loop; vehicles stop at the middle point (entrance doors)
